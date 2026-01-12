@@ -10,6 +10,7 @@ import { handleSearch, handleSearchPrds, handleListResources, handleReadResource
 import { validatePipelineYaml } from './pipeline-validator';
 import type { components } from './types/validate-api';
 import { getActivityTimeline } from './vulcan/activity';
+import { getTenantConfig } from './vulcan/config';
 
 // Typed external validation using validate.expanso.io API contract
 type ValidateResponse = components['schemas']['ValidateResponse'];
@@ -648,7 +649,7 @@ function formatMcpValidationResult(result: McpValidationResult): string {
 }
 
 // Handle MCP JSON-RPC request
-export async function handleMcpRequest(request: Request, env: Env): Promise<Response> {
+export async function handleMcpRequest(request: Request, env: Env, tenant: string = 'default'): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
       status: 405,
@@ -657,7 +658,7 @@ export async function handleMcpRequest(request: Request, env: Env): Promise<Resp
   }
 
   const body = (await request.json()) as McpRequest;
-  const response = await processRequest(body, env);
+  const response = await processRequest(body, env, tenant);
 
   return new Response(JSON.stringify(response), {
     headers: { 'Content-Type': 'application/json' },
@@ -713,7 +714,7 @@ export function handleSseConnection(request: Request, env: Env): Response {
 }
 
 // Process MCP request
-async function processRequest(request: McpRequest, env: Env): Promise<McpResponse> {
+async function processRequest(request: McpRequest, env: Env, tenant: string = 'default'): Promise<McpResponse> {
   const { id, method, params } = request;
 
   try {
@@ -747,7 +748,7 @@ async function processRequest(request: McpRequest, env: Env): Promise<McpRespons
         if (!toolParams?.name) {
           return errorResponse(id, -32602, 'Missing tool name');
         }
-        return await handleToolCall(id, toolParams, env);
+        return await handleToolCall(id, toolParams, env, tenant);
 
       case 'resources/list':
         const resources = await handleListResources(env);
@@ -817,7 +818,8 @@ function sanitizeFilename(name: string): string {
 async function handleToolCall(
   id: string | number,
   params: ToolCallParams,
-  env: Env
+  env: Env,
+  tenant: string = 'default'
 ): Promise<McpResponse> {
   const { name, arguments: args } = params;
 
@@ -1370,8 +1372,10 @@ ${prd}`;
     }
 
     case 'vulcan_activity_timeline': {
-      // Check if Vulcan API is configured
-      if (!env.VULCAN_BASE_URL) {
+      // Get tenant configuration
+      const tenantConfig = await getTenantConfig(env, tenant);
+      
+      if (!tenantConfig) {
         return {
           jsonrpc: '2.0',
           id,
@@ -1382,8 +1386,9 @@ ${prd}`;
                 text: JSON.stringify(
                   {
                     error: 'Vulcan API not configured',
-                    message: 'VULCAN_BASE_URL environment variable is not set. This tool requires the Vulcan API to be configured in the production environment.',
-                    hint: 'Set VULCAN_BASE_URL in Cloudflare Workers environment variables (Dashboard → Workers → Settings → Variables) or in wrangler.toml',
+                    message: `Vulcan API configuration not found for tenant "${tenant}". This tool requires the Vulcan API to be configured.`,
+                    hint: `Set tenant configuration in Cloudflare KV:\n  Key: tenant:${tenant}\n  Value: {"VULCAN_BASE_URL": "https://your-vulcan-api.com", "VULCAN_TOKEN": "optional-token"}\n\nOr use wrangler CLI:\n  wrangler kv:key put "tenant:${tenant}" --path config.json\n\nFor backward compatibility, you can also set VULCAN_BASE_URL in environment variables.`,
+                    tenant,
                   },
                   null,
                   2
@@ -1404,7 +1409,7 @@ ${prd}`;
       const failed_only = (args?.failed_only as boolean) || false;
 
       try {
-        const result = await getActivityTimeline(env, {
+        const result = await getActivityTimeline(tenantConfig, {
           action,
           environment,
           after_start_ts,

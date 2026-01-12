@@ -31,6 +31,11 @@ remote = true
 binding = "CONTENT_CACHE"
 id = "6bff6a8150204e6da7101c9137128aaf"
 
+# KV for storing tenant-specific Vulcan API configuration
+[[kv_namespaces]]
+binding = "VULCAN_CONFIG"
+id = "749180a6a34a40ddac2dabd159c982fa"
+
 # R2 for storing bad YAML feedback (append-only JSONL)
 # NOTE: Disabled for Vulcan - R2 was only used for Expanso-specific YAML feedback
 # [[r2_buckets]]

@@ -296,10 +296,11 @@ export interface Env {
   VECTORIZE?: VectorizeIndex; // Optional - requires vectorize:create permission
   VECTORIZE_PRD?: VectorizeIndex; // Optional - PRD search index
   CONTENT_CACHE?: KVNamespace; // Optional - requires kv:create permission
+  VULCAN_CONFIG?: KVNamespace; // KV for tenant-specific Vulcan API configuration
   FEEDBACK_BUCKET?: R2Bucket; // R2 for storing bad YAML feedback
   DOCS_DOMAINS: string;
   POSTHOG_API_KEY: string;
-  // Vulcan API configuration
+  // Vulcan API configuration (fallback - prefer tenant config in KV)
   VULCAN_BASE_URL?: string;
   VULCAN_TOKEN?: string;
   VULCAN_AUTH_HEADER?: string;
@@ -349,7 +350,7 @@ export default {
           if (request.headers.get('Accept') === 'text/event-stream') {
             return handleSseConnection(request, env);
           }
-          return handleMcpRequest(request, env);
+          return handleMcpRequest(request, env, 'default'); // Default tenant for backward compat
 
         // HTTP API endpoints for direct access
         case '/api/search':
@@ -390,6 +391,17 @@ export default {
           return jsonResponse(getMcpDiscovery(url.origin), corsHeaders);
 
         default:
+          // Handle /mcp/{tenant} pattern (tenant routing)
+          if (url.pathname.startsWith('/mcp/')) {
+            const tenant = url.pathname.slice('/mcp/'.length);
+            if (!tenant) {
+              return jsonResponse({ error: 'Tenant ID required in path: /mcp/{tenant}' }, corsHeaders, 400);
+            }
+            if (request.headers.get('Accept') === 'text/event-stream') {
+              return handleSseConnection(request, env);
+            }
+            return handleMcpRequest(request, env, tenant);
+          }
           // Handle /api/resources/:uri pattern
           if (url.pathname.startsWith('/api/resources/')) {
             const uri = decodeURIComponent(url.pathname.slice('/api/resources/'.length));

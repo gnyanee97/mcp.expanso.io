@@ -5,7 +5,7 @@
  */
 
 import { vulcanGet } from './http';
-import type { Env } from '../index';
+import type { TenantConfig } from './config';
 
 // Types matching OpenAPI spec
 export interface TimelineEvent {
@@ -76,7 +76,7 @@ export interface ActivityTimelineParams {
 }
 
 export async function getActivityTimeline(
-  env: Env,
+  tenantConfig: TenantConfig | null,
   params: ActivityTimelineParams
 ): Promise<{ summary: TimelineSummary; events: TimelineEvent[]; raw: TimelineResponse }> {
   const query: Record<string, string | number | undefined> = {
@@ -88,7 +88,7 @@ export async function getActivityTimeline(
     offset: params.offset ?? 0,
   };
 
-  const data = await vulcanGet<TimelineResponse>(env, '/api/v1/activity/timeline', query);
+  const data = await vulcanGet<TimelineResponse>(tenantConfig, '/api/v1/activity/timeline', query);
 
   let events = data.events ?? [];
 

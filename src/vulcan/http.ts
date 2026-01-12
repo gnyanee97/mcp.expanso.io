@@ -4,7 +4,7 @@
  * Handles authentication and HTTP requests to Vulcan APIs.
  */
 
-import type { Env } from '../index';
+import type { TenantConfig } from './config';
 
 export type VulcanAuth = {
   headerName: string;      // e.g. "Authorization" or "X-API-Key"
@@ -17,14 +17,19 @@ export interface VulcanConfig {
   auth: VulcanAuth;
 }
 
-export function getVulcanConfig(env: Env): VulcanConfig {
-  const baseUrl = env.VULCAN_BASE_URL;
-  const token = env.VULCAN_TOKEN || ''; // Optional - default to empty if not provided
+/**
+ * Create VulcanConfig from tenant configuration.
+ * Accepts either TenantConfig (from KV) or legacy env vars.
+ */
+export function getVulcanConfig(tenantConfig: TenantConfig | null): VulcanConfig {
+  if (!tenantConfig || !tenantConfig.VULCAN_BASE_URL) {
+    throw new Error("Missing VULCAN_BASE_URL in tenant configuration");
+  }
 
-  if (!baseUrl) throw new Error("Missing VULCAN_BASE_URL in environment");
-
-  const headerName = env.VULCAN_AUTH_HEADER || "Authorization";
-  const scheme = env.VULCAN_AUTH_SCHEME || "Bearer";
+  const baseUrl = tenantConfig.VULCAN_BASE_URL;
+  const token = tenantConfig.VULCAN_TOKEN || ''; // Optional - default to empty if not provided
+  const headerName = tenantConfig.VULCAN_AUTH_HEADER || "Authorization";
+  const scheme = tenantConfig.VULCAN_AUTH_SCHEME || "Bearer";
 
   return { 
     baseUrl, 
@@ -33,11 +38,11 @@ export function getVulcanConfig(env: Env): VulcanConfig {
 }
 
 export async function vulcanGet<T>(
-  env: Env,
+  tenantConfig: TenantConfig | null,
   path: string,
   query: Record<string, string | number | undefined> = {},
 ): Promise<T> {
-  const { baseUrl, auth } = getVulcanConfig(env);
+  const { baseUrl, auth } = getVulcanConfig(tenantConfig);
 
   const url = new URL(path, baseUrl);
   for (const [k, v] of Object.entries(query)) {
