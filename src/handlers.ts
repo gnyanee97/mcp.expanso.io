@@ -23,6 +23,20 @@ interface SearchResult {
   domain: string;
 }
 
+// PRD search result
+interface PrdSearchResult {
+  uri: string;
+  title: string;
+  snippet: string;
+  score: number;
+  domain: string;
+  product_name: string;
+  section: string;
+  owner_team?: string;
+  source_repo?: string;
+  tags?: string;
+}
+
 // Content response
 interface ContentResponse {
   uri: string;
@@ -33,105 +47,16 @@ interface ContentResponse {
 
 // All available llms.txt resources
 const RESOURCES: Resource[] = [
-  // expanso.io
   {
-    uri: 'https://expanso.io/llms.txt',
-    name: 'Expanso Overview',
-    description: 'Master index for Expanso - upstream data governance platform',
+    uri: 'https://raw.githubusercontent.com/tmdc-io/vulcan-book/vulcan-ai/docs/llms.txt',
+    name: 'Vulcan Book (LLMs Index)',
+    description: 'Entry point listing all Vulcan documentation text exports for indexing/search.',
     mimeType: 'text/plain',
   },
   {
-    uri: 'https://expanso.io/llms/product.txt',
-    name: 'Product Overview',
-    description: 'Expanso product capabilities and architecture',
-    mimeType: 'text/plain',
-  },
-  {
-    uri: 'https://expanso.io/llms/industries.txt',
-    name: 'Industries',
-    description: 'Industry-specific solutions for healthcare, retail, manufacturing',
-    mimeType: 'text/plain',
-  },
-  {
-    uri: 'https://expanso.io/llms/use-cases.txt',
-    name: 'Use Cases',
-    description: 'Common use cases for edge data processing',
-    mimeType: 'text/plain',
-  },
-  {
-    uri: 'https://expanso.io/llms/comparisons.txt',
-    name: 'Comparisons',
-    description: 'How Expanso compares to alternatives',
-    mimeType: 'text/plain',
-  },
-
-  // docs.expanso.io
-  {
-    uri: 'https://docs.expanso.io/llms.txt',
-    name: 'Expanso Docs Index',
-    description: 'Documentation index for Expanso platform',
-    mimeType: 'text/plain',
-  },
-  {
-    uri: 'https://docs.expanso.io/llms/getting-started.txt',
-    name: 'Getting Started',
-    description: 'Installation and first steps with Expanso',
-    mimeType: 'text/plain',
-  },
-  {
-    uri: 'https://docs.expanso.io/llms/cli.txt',
-    name: 'CLI Reference',
-    description: 'Expanso CLI commands and usage',
-    mimeType: 'text/plain',
-  },
-  {
-    uri: 'https://docs.expanso.io/llms/components.txt',
-    name: 'Pipeline Components',
-    description: 'Inputs, processors, and outputs for data pipelines',
-    mimeType: 'text/plain',
-  },
-  {
-    uri: 'https://docs.expanso.io/llms/operations.txt',
-    name: 'Operations',
-    description: 'Deployment, monitoring, and scaling',
-    mimeType: 'text/plain',
-  },
-  {
-    uri: 'https://docs.expanso.io/llms/guides.txt',
-    name: 'How-To Guides',
-    description: 'Practical integration and configuration guides',
-    mimeType: 'text/plain',
-  },
-
-  // examples.expanso.io
-  {
-    uri: 'https://examples.expanso.io/llms.txt',
-    name: 'Examples Index',
-    description: 'Production-ready pipeline examples',
-    mimeType: 'text/plain',
-  },
-  {
-    uri: 'https://examples.expanso.io/llms/data-routing.txt',
-    name: 'Data Routing',
-    description: 'Circuit breakers, fan-out, priority queues',
-    mimeType: 'text/plain',
-  },
-  {
-    uri: 'https://examples.expanso.io/llms/data-security.txt',
-    name: 'Data Security',
-    description: 'PII removal, encryption, schema validation',
-    mimeType: 'text/plain',
-  },
-  {
-    uri: 'https://examples.expanso.io/llms/data-transformation.txt',
-    name: 'Data Transformation',
-    description: 'Time windows, deduplication, format conversion',
-    mimeType: 'text/plain',
-  },
-  {
-    uri: 'https://examples.expanso.io/llms/log-processing.txt',
-    name: 'Log Processing',
-    description: 'Filtering, enrichment, production pipelines',
+    uri: 'https://raw.githubusercontent.com/tmdc-io/vulcan-book/vulcan-ai/docs/llms-full.txt',
+    name: 'Vulcan Book (Full)',
+    description: 'Flattened full Vulcan documentation export (large).',
     mimeType: 'text/plain',
   },
 ];
@@ -257,11 +182,26 @@ export async function handleReadResource(
   env: Env,
   uri: string
 ): Promise<ContentResponse | null> {
-  // Validate URI is in our allowed list
-  const resource = RESOURCES.find((r) => r.uri === uri);
-  if (!resource) {
+  // Parse allowed domains from env var
+  const allowedDomains = (env.DOCS_DOMAINS || 'raw.githubusercontent.com,github.com,tmdc-io.github.io')
+    .split(',')
+    .map(d => d.trim());
+
+  // Validate URI is from an allowed domain
+  let url: URL;
+  try {
+    url = new URL(uri);
+  } catch {
     return null;
   }
+
+  const isAllowedDomain = allowedDomains.some(domain => url.hostname === domain || url.hostname.endsWith('.' + domain));
+  if (!isAllowedDomain) {
+    return null;
+  }
+
+  // Check if URI is in RESOURCES for title/name
+  const resource = RESOURCES.find((r) => r.uri === uri);
 
   // Check cache first (if KV is available)
   const cacheKey = `content:${uri}`;
@@ -280,7 +220,7 @@ export async function handleReadResource(
   try {
     const response = await fetch(uri, {
       headers: {
-        'User-Agent': 'ExpansoMCPServer/1.0',
+        'User-Agent': 'VulcanMCPServer/1.0',
       },
     });
 
@@ -290,11 +230,28 @@ export async function handleReadResource(
     }
 
     const content = await response.text();
+    
+    // Extract title from URI path if not in RESOURCES
+    let title = resource?.name || 'Untitled';
+    if (!resource) {
+      // Try to extract a meaningful title from the path
+      const pathParts = url.pathname.split('/').filter(p => p);
+      const fileName = pathParts[pathParts.length - 1] || '';
+      if (fileName) {
+        // Remove extension and format
+        title = fileName.replace(/\.(txt|md)$/i, '').replace(/[-_]/g, ' ');
+        // Capitalize first letter of each word
+        title = title.split(' ').map(word => 
+          word.charAt(0).toUpperCase() + word.slice(1)
+        ).join(' ');
+      }
+    }
+
     const result: ContentResponse = {
       uri,
       content,
-      title: resource.name,
-      domain: new URL(uri).hostname,
+      title,
+      domain: url.hostname,
     };
 
     // Cache for 1 hour (if KV is available)
@@ -312,6 +269,54 @@ export async function handleReadResource(
   } catch (error) {
     console.error(`Error fetching ${uri}:`, error);
     return null;
+  }
+}
+
+/**
+ * Semantic search over PRDs
+ */
+export async function handleSearchPrds(
+  env: Env,
+  query: string,
+  limit: number = 5,
+  domain?: string
+): Promise<{ results: PrdSearchResult[]; query: string }> {
+  if (!env.VECTORIZE_PRD) {
+    return { results: [], query };
+  }
+
+  try {
+    const embedding = await generateEmbedding(env, query);
+
+    const vectorResults = await env.VECTORIZE_PRD.query(embedding, {
+      topK: limit * 2,
+      returnMetadata: 'all',
+    });
+
+    const results: PrdSearchResult[] = vectorResults.matches
+      .filter((match) => {
+        if (!domain) return true;
+        const matchDomain = (match.metadata?.domain as string) || '';
+        return matchDomain.toLowerCase().includes(domain.toLowerCase());
+      })
+      .slice(0, limit)
+      .map((match) => ({
+        uri: (match.metadata?.uri as string) || '',
+        title: (match.metadata?.title as string) || 'Untitled',
+        snippet: (match.metadata?.snippet as string) || '',
+        score: match.score,
+        domain: (match.metadata?.domain as string) || 'unknown',
+        product_name: (match.metadata?.product_name as string) || '',
+        section: (match.metadata?.section as string) || '',
+        owner_team: (match.metadata?.owner_team as string) || undefined,
+        source_repo: (match.metadata?.source_repo as string) || undefined,
+        tags: (match.metadata?.tags as string) || undefined,
+      }));
+
+    return { results, query };
+  } catch (error) {
+    console.error('PRD search error:', error);
+    return { results: [], query };
   }
 }
 

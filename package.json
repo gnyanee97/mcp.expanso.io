@@ -1,7 +1,7 @@
 {
-  "name": "expanso-mcp-server",
+  "name": "vulcan-mcp-server",
   "version": "1.0.0",
-  "description": "MCP server for Expanso documentation - semantic search and retrieval",
+  "description": "MCP server for Vulcan documentation - semantic search and retrieval",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
@@ -10,6 +10,7 @@
     "tail": "wrangler tail",
     "typecheck": "tsc --noEmit",
     "index": "npx tsx scripts/index-content.ts",
+    "index:prds": "npx tsx scripts/index-prds.ts",
     "test": "vitest"
   },
   "devDependencies": {

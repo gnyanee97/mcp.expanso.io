@@ -1,12 +1,12 @@
-# Expanso MCP Server
+# Vulcan MCP Server
 
-A Model Context Protocol (MCP) server for semantic search and retrieval over Expanso documentation. Deployed on Cloudflare Workers with Vectorize for vector search.
+A Model Context Protocol (MCP) server for semantic search and retrieval over Vulcan documentation. Deployed on Cloudflare Workers with Vectorize for vector search.
 
 ## Features
 
 - **Semantic Search**: Query documentation using natural language
 - **MCP Protocol**: Compatible with Claude, ChatGPT, and other AI assistants
-- **Multi-Domain**: Searches across expanso.io, docs.expanso.io, docs.bacalhau.org, examples.expanso.io
+- **Multi-Domain**: Searches across Vulcan documentation from GitHub
 - **HTTP API**: Direct API access for custom integrations
 - **Edge Deployment**: Low latency via Cloudflare's global network
 
@@ -60,7 +60,7 @@ wrangler kv namespace create CONTENT_CACHE
 # Update wrangler.toml with the returned ID
 
 # Create Vectorize index
-wrangler vectorize create expanso-docs --dimensions=768 --metric=cosine
+wrangler vectorize create vulcan-docs --dimensions=768 --metric=cosine
 ```
 
 ### Index Content
@@ -101,7 +101,7 @@ Parameters:
 
 Example:
 ```bash
-curl "https://mcp.expanso.io/api/search?q=circuit+breaker+pattern&limit=3"
+curl "https://mcp.vulcan.io/api/search?q=vulcan+getting+started&limit=3"
 ```
 
 #### List Resources
@@ -120,7 +120,7 @@ GET /api/resources/<encoded-uri>
 
 Example:
 ```bash
-curl "https://mcp.expanso.io/api/resources/https%3A%2F%2Fdocs.expanso.io%2Fllms%2Fgetting-started.txt"
+curl "https://mcp.vulcan.io/api/resources/https%3A%2F%2Fraw.githubusercontent.com%2Ftmdc-io%2Fvulcan-book%2Fvulcan-ai%2Fdocs%2Fllms%2Fgetting_started%2Fcli.txt"
 ```
 
 ### MCP Protocol
@@ -165,8 +165,8 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "expanso-docs": {
-      "url": "https://mcp.expanso.io/mcp"
+    "vulcan-docs": {
+      "url": "https://mcp.vulcan.io/mcp"
     }
   }
 }
@@ -183,11 +183,11 @@ const client = new Client({
 });
 
 await client.connect({
-  url: 'https://mcp.expanso.io/mcp',
+  url: 'https://mcp.vulcan.io/mcp',
 });
 
 const results = await client.callTool('search_docs', {
-  query: 'kafka to snowflake pipeline',
+  query: 'vulcan getting started',
 });
 ```
 
@@ -208,10 +208,9 @@ npm run tail
 
 | Domain | Content |
 |--------|---------|
-| expanso.io | Product overview, industries, use cases |
-| docs.expanso.io | Platform documentation, CLI, components |
-| docs.bacalhau.org | Bacalhau distributed compute docs |
-| examples.expanso.io | Production-ready pipeline examples |
+| raw.githubusercontent.com | Vulcan documentation from GitHub (vulcan-ai branch) |
+| github.com | Vulcan repository and documentation |
+| tmdc-io.github.io | Vulcan GitHub Pages documentation |
 
 ## License
 

@@ -1,14 +1,14 @@
-# Expanso MCP Server
-# Provides semantic search and retrieval over Expanso documentation
+# Vulcan MCP Server
+# Provides semantic search and retrieval over Vulcan documentation
 
-name = "expanso-mcp-server"
-account_id = "d1c1c1ca949d314db89a2ac4a67e5734"
+name = "vulcan-mcp-server"
+account_id = "872b7350276bf9b7477ad5f6eba11f65"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Custom domain: mcp.expanso.io
-routes = [{ pattern = "mcp.expanso.io", custom_domain = true }]
+# Custom domain: mcp.vulcan.io (update when domain is configured)
+# routes = [{ pattern = "mcp.vulcan.io", custom_domain = true }]
 
 # Workers AI for embeddings
 [ai]
@@ -17,27 +17,46 @@ binding = "AI"
 # Vectorize for semantic search
 [[vectorize]]
 binding = "VECTORIZE"
-index_name = "expanso-docs"
+index_name = "vulcan-docs"
+remote = true
+
+# Vectorize for PRD search
+[[vectorize]]
+binding = "VECTORIZE_PRD"
+index_name = "vulcan-prds"
+remote = true
 
 # KV for caching llms.txt content
 [[kv_namespaces]]
 binding = "CONTENT_CACHE"
-id = "3c147228e7d04ac8926137d8214c2a6c"
+id = "6bff6a8150204e6da7101c9137128aaf"
 
 # R2 for storing bad YAML feedback (append-only JSONL)
-[[r2_buckets]]
-bucket_name = "mcp-feedback"
-binding = "FEEDBACK_BUCKET"
+# NOTE: Disabled for Vulcan - R2 was only used for Expanso-specific YAML feedback
+# [[r2_buckets]]
+# bucket_name = "mcp-feedback"
+# binding = "FEEDBACK_BUCKET"
 
 # Environment variables
 [vars]
-DOCS_DOMAINS = "expanso.io,docs.expanso.io,examples.expanso.io"
+DOCS_DOMAINS = "raw.githubusercontent.com,github.com,tmdc-io.github.io"
 POSTHOG_API_KEY = "phc_f467hBf7ZUEc5HDT3xFcbhZ4tL7wUYJH0COw9Y2bzSK"
+
+# Vulcan API configuration (required for Activity Timeline tool)
+# Set VULCAN_BASE_URL in Cloudflare Workers Dashboard → Settings → Variables
+# For production: Set to your production Vulcan API URL (e.g., "https://api.vulcan.io")
+# For local dev: Set in .dev.vars file (see .dev.vars.example)
+# VULCAN_BASE_URL = ""  # Production Vulcan API base URL - MUST be set in Cloudflare Dashboard
+# VULCAN_TOKEN = ""     # API authentication token (optional - leave empty if no auth required)
+# VULCAN_AUTH_HEADER = "Authorization"  # Auth header name (default: "Authorization")
+# VULCAN_AUTH_SCHEME = "Bearer"         # Auth scheme (default: "Bearer")
 
 # Development environment
 [env.dev]
-name = "expanso-mcp-server-dev"
+name = "vulcan-mcp-server-dev"
 
 [env.dev.vars]
-DOCS_DOMAINS = "expanso.io,docs.expanso.io,examples.expanso.io"
+DOCS_DOMAINS = "raw.githubusercontent.com,github.com,tmdc-io.github.io"
 POSTHOG_API_KEY = "phc_f467hBf7ZUEc5HDT3xFcbhZ4tL7wUYJH0COw9Y2bzSK"
+# VULCAN_BASE_URL = "http://localhost:8000"
+# VULCAN_TOKEN = ""  # Optional - leave empty if no auth required

@@ -1,12 +1,12 @@
 /**
- * Expanso MCP Server
+ * Vulcan MCP Server
  *
- * Provides semantic search and retrieval over Expanso documentation.
+ * Provides semantic search and retrieval over Vulcan documentation.
  * Supports both HTTP API and MCP protocol over SSE.
  */
 
 import { handleMcpRequest, handleSseConnection } from './mcp';
-import { handleSearch, handleListResources, handleReadResource } from './handlers';
+import { handleSearch, handleSearchPrds, handleListResources, handleReadResource } from './handlers';
 import { getChatHtml } from './chat-ui';
 import { trackChat, trackSearch, trackPageView, trackYamlFeedback, trackYamlGenerated, getDistinctId } from './analytics';
 import { validatePipelineYaml, formatValidationErrors } from './pipeline-validator';
@@ -294,10 +294,16 @@ async function validateAndFixYaml(
 export interface Env {
   AI: Ai;
   VECTORIZE?: VectorizeIndex; // Optional - requires vectorize:create permission
+  VECTORIZE_PRD?: VectorizeIndex; // Optional - PRD search index
   CONTENT_CACHE?: KVNamespace; // Optional - requires kv:create permission
   FEEDBACK_BUCKET?: R2Bucket; // R2 for storing bad YAML feedback
   DOCS_DOMAINS: string;
   POSTHOG_API_KEY: string;
+  // Vulcan API configuration
+  VULCAN_BASE_URL?: string;
+  VULCAN_TOKEN?: string;
+  VULCAN_AUTH_HEADER?: string;
+  VULCAN_AUTH_SCHEME?: string;
 }
 
 export default {
@@ -332,7 +338,7 @@ export default {
 
         // Health check
         case '/health':
-          return jsonResponse({ status: 'ok', service: 'expanso-mcp-server' }, corsHeaders);
+          return jsonResponse({ status: 'ok', service: 'vulcan-mcp-server' }, corsHeaders);
 
         // Chat API - RAG-powered chat
         case '/api/chat':
@@ -348,6 +354,18 @@ export default {
         // HTTP API endpoints for direct access
         case '/api/search':
           return handleSearchApi(request, env, corsHeaders);
+
+        case '/api/prds/search': {
+          const q = url.searchParams.get('q') || '';
+          const limit = Number(url.searchParams.get('limit') || '5');
+
+          if (!q.trim()) {
+            return jsonResponse({ results: [], query: q }, corsHeaders);
+          }
+
+          const data = await handleSearchPrds(env, q, limit);
+          return jsonResponse(data, corsHeaders);
+        }
 
         case '/api/resources':
           return handleResourcesApi(request, env, corsHeaders);
@@ -769,74 +787,20 @@ async function handleChatApi(
   const context = [examplesContext, docsContext].filter(Boolean).join('\n\n---\n\n');
 
   // Build messages for the LLM
-  const systemPrompt = `You are a documentation assistant for Expanso.
-
-${hasExamples ? `VALIDATED EXAMPLES ARE PROVIDED BELOW.
-Use these examples as REFERENCE for correct syntax and patterns.
-When generating pipelines, you may adapt examples OR create new ones.
-
-` : ''}ALWAYS GENERATE PIPELINES:
-- When a user asks for a pipeline, ALWAYS provide YAML - never refuse
-- Use examples as reference for correct syntax patterns
-- If unsure, make your best attempt - the system auto-validates and corrects YAML
-- Be creative: combine patterns, modify examples, create new solutions
+  const systemPrompt = `You are a documentation assistant for Vulcan, a Python framework for data transformation.
 
 COMMUNICATION STYLE:
 - Write in plain, simple English - avoid jargon
 - Keep explanations SHORT (2-3 sentences max per point)
 - Use bullet points, not paragraphs
-- Be direct: "This reads from X and writes to Y"
+- Be direct and concise
 
 GUIDELINES:
 1. For documentation questions, use information from the context below
-2. For pipeline requests, ALWAYS generate YAML - the system will validate and auto-correct it
-3. Follow the YAML patterns shown in examples and the format guide below
-4. Use precise verbs: inputs "read from", outputs "write to", processors "transform". Never say "learns" or "understands".
-
-PIPELINE YAML FORMAT - THIS IS MANDATORY:
-A pipeline is ONE YAML document with input, pipeline, and output sections.
-\`\`\`yaml
-input:
-  kafka:
-    addresses: [localhost:9092]
-    topics: [my-topic]
-
-pipeline:
-  processors:      # ALL processors go in ONE list - never split into multiple documents
-    - mapping: |
-        root.timestamp = now()
-        root.data = this.value.parse_json()
-    - mapping: |
-        root = if this.data.type == "event" { this.data.event } else { deleted() }
-
-output:
-  aws_s3:
-    bucket: my-bucket
-    path: \${! timestamp_unix() }.json
-\`\`\`
-
-BLOBLANG SYNTAX (inside mapping:):
-- Parse JSON: this.parse_json() or this.value.parse_json() - NOT from_json()
-- Format JSON: this.format_json() - NOT to_json()
-- Conditionals: if cond { val } else { other } - NOT if...then...else
-- Drop message: root = deleted() - NOT root = null
-- Variables: let x = value - NOT var or const
-- Arrays: this.map_each(x -> x.field) - NOT .map(x => ...)
-
-COMMON COMPONENTS:
-- Data generation: use "generate:" input (NOT "null:" or "random:")
-  generate: { count: 10, interval: 1s, mapping: "root = {}" }
-- Print to console: use "stdout: {}" (no extra fields needed)
-  stdout: {} - NEVER use "stdout: format:" or "stdout: output:"
-
-NEVER USE THESE PATTERNS:
-- Multiple "---" separated documents (wrong) - ONE document only
-- "components:" (wrong) - use "input:", "pipeline:", "output:"
-- "pipeline: with:" (wrong) - use "pipeline: processors:"
-- "from_json()" (wrong) - use .parse_json() method
-- "if x then y else z" (wrong) - use if x { y } else { z }
-- "input: null:" (wrong) - use "input: generate:"
-- "stdout: format:" (wrong) - use just "stdout: {}"
+2. Answer questions about Vulcan based on the provided documentation
+3. If you don't know the answer, say so rather than guessing
+4. Provide Python code examples when relevant, using the syntax shown in the documentation
+5. Do NOT generate YAML pipeline configurations - Vulcan uses Python, not YAML pipelines
 
 Context:
 ${context || 'No relevant documentation found for this query.'}`;
@@ -1123,14 +1087,14 @@ Fix these issues and regenerate a valid pipeline. Key rules:
 function getMcpDiscovery(origin: string) {
   return {
     $schema: 'https://modelcontextprotocol.io/schemas/mcp.json',
-    name: 'Expanso Documentation',
-    description: 'Semantic search and retrieval over Expanso platform documentation',
-    homepage: 'https://expanso.io',
+    name: 'Vulcan Documentation',
+    description: 'Semantic search and retrieval over Vulcan platform documentation',
+    homepage: 'https://vulcan.io',
     servers: [
       {
-        name: 'expanso-docs',
+        name: 'vulcan-docs',
         url: origin,
-        description: 'Search and retrieve Expanso documentation',
+        description: 'Search and retrieve Vulcan documentation',
         capabilities: {
           tools: true,
           resources: true,

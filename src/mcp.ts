@@ -6,9 +6,10 @@
  */
 
 import type { Env } from './index';
-import { handleSearch, handleListResources, handleReadResource } from './handlers';
+import { handleSearch, handleSearchPrds, handleListResources, handleReadResource } from './handlers';
 import { validatePipelineYaml } from './pipeline-validator';
 import type { components } from './types/validate-api';
+import { getActivityTimeline } from './vulcan/activity';
 
 // Typed external validation using validate.expanso.io API contract
 type ValidateResponse = components['schemas']['ValidateResponse'];
@@ -37,6 +38,12 @@ import {
 import { suggestWithFallback } from './pattern-suggester';
 import { explainError } from './error-explainer';
 import { generateTestData } from './test-data-generator';
+import {
+  PRD_QUESTIONNAIRE_V1,
+  validateAnswers,
+  renderPrdMarkdown,
+  type PrdAnswers,
+} from './prd';
 
 // MCP Protocol types
 interface McpRequest {
@@ -62,7 +69,7 @@ export const TOOLS = [
   {
     name: 'search_docs',
     description:
-      'Search Expanso documentation using semantic search. Returns relevant documentation sections for a given query.',
+      'Search Vulcan documentation using semantic search. Returns relevant documentation sections for a given query.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -78,8 +85,32 @@ export const TOOLS = [
         domain: {
           type: 'string',
           description:
-            'Filter by domain: expanso.io, docs.expanso.io, examples.expanso.io',
-          enum: ['expanso.io', 'docs.expanso.io', 'examples.expanso.io'],
+            'Filter by domain: raw.githubusercontent.com, github.com, tmdc-io.github.io',
+          enum: ['raw.githubusercontent.com', 'github.com', 'tmdc-io.github.io'],
+        },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'search_prds',
+    description:
+      'Search data product PRDs using semantic search. Returns relevant PRD sections with product metadata (domain, owner_team, tags, etc.).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'The search query - natural language question or keywords (e.g., "analytics data products", "user engagement metrics")',
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum number of results (default: 5, max: 20)',
+          default: 5,
+        },
+        domain: {
+          type: 'string',
+          description: 'Filter by business domain (e.g., analytics, platform, marketing, finance, operations)',
         },
       },
       required: ['query'],
@@ -94,7 +125,7 @@ export const TOOLS = [
       properties: {
         uri: {
           type: 'string',
-          description: 'The resource URI (e.g., https://docs.expanso.io/llms/getting-started.txt)',
+          description: 'The resource URI (e.g., https://raw.githubusercontent.com/tmdc-io/vulcan-book/vulcan-ai/docs/llms.txt)',
         },
       },
       required: ['uri'],
@@ -103,7 +134,7 @@ export const TOOLS = [
   {
     name: 'list_resources',
     description:
-      'List all available documentation resources across Expanso domains. Returns URIs and descriptions.',
+      'List all available documentation resources for Vulcan. Returns URIs and descriptions.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -313,6 +344,103 @@ export const TOOLS = [
           enum: ['json', 'jsonl', 'csv', 'yaml'],
           description: 'Output format for the generated data',
           default: 'jsonl',
+        },
+      },
+    },
+  },
+  {
+    name: 'get_data_product_prd_questionnaire',
+    description:
+      'MANDATORY FIRST STEP: Returns the Vulcan-first PRD questionnaire (v1). You MUST call this tool first, then interview the user by asking each question from the questionnaire. DO NOT proceed to generate_data_product_prd until you have collected ALL answers directly from the user. DO NOT make up or assume any answers.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'generate_data_product_prd',
+    description:
+      'CRITICAL: Only call this tool AFTER you have: (1) called get_data_product_prd_questionnaire, (2) asked the user ALL questions from the questionnaire, and (3) collected their actual answers. DO NOT generate or assume answers. DO NOT call this tool with placeholder or example data. The answers parameter must contain real answers provided by the user during the interview. Generates a Data Product PRD in Markdown from the user-provided answers.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        answers: {
+          type: 'object',
+          description:
+            'REQUIRED: Answers JSON containing ONLY the user\'s actual responses collected during the questionnaire interview. Must include: product_name, goal, consumers, grain, entities, primary_time, dimensions, measures, metrics, sources, freshness_backfill. These must be real answers from the user, not examples or placeholders. See get_data_product_prd_questionnaire for the expected structure.',
+        },
+      },
+      required: ['answers'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'vulcan_activity_timeline',
+    description: `Query Vulcan Activity API to get timeline of plan deployments and run executions. Returns LIVE operational data from Vulcan APIs.
+    
+CRITICAL: Use this tool when the user asks about:
+- Current state / operational status ("What happened?", "What failed?", "What's running?", "Show me status")
+- Run execution history ("Did model X run?", "Show me recent runs", "What runs happened today?", "Latest runs")
+- Plan deployments ("What was the last plan?", "Show me recent deployments", "Latest plan")
+- Failures and errors ("What failed today?", "Show me failures in prod", "Any errors today?", "What broke?")
+- Activity timeline ("Show me activity", "What's the latest activity?", "Recent timeline", "Pipeline status")
+- Time-based queries ("today", "yesterday", "last hour", "recent", "latest")
+- Environment-specific ("prod", "production", "staging", "dev")
+- Model-specific ("Did model users run?", "Show runs for model X")
+
+IMPORTANT: This tool queries LIVE operational data from Vulcan APIs, NOT documentation. 
+- Use search_docs for documentation questions
+- Use search_prds for PRD questions
+- Use this tool for "What happened?" / operational status questions
+
+Examples:
+- "What failed today in prod?" → Set failed_only=true, environment="prod", after_start_ts=today_start_ms
+- "Did model users run?" → Set model_name=["users"]
+- "Show recent activity" → Use default parameters
+- "What happened in the last hour?" → Set after_start_ts=(now - 3600000)ms
+- "Latest runs" → Set action="run", limit=10
+- "Show me the last plan" → Set action="plan", limit=1
+
+Returns both raw events and a summary view with breakdown by plans/runs, success/failure counts, and latest events.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['plan', 'run'],
+          description: 'Filter by event type: "plan" for deployments/changes, "run" for model executions. Omit for both types.',
+        },
+        environment: {
+          type: 'string',
+          description: 'Filter by environment name (e.g., "prod", "production", "staging", "dev"). Omit to return events from all environments.',
+        },
+        after_start_ts: {
+          type: 'number',
+          description: 'Filter events with start_ts >= this timestamp (Unix milliseconds). Convert time phrases: "today" → today\'s 00:00:00 UTC, "last hour" → (now - 3600000)ms, "yesterday" → yesterday\'s 00:00:00 UTC, "last 24h" → (now - 86400000)ms.',
+        },
+        model_name: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Filter activities affecting these model names (e.g., ["users", "orders"]). Will be sent as comma-separated to API. Use when user asks "Did model X run?" or "Show runs for model Y".',
+        },
+        limit: {
+          type: 'number',
+          default: 100,
+          minimum: 1,
+          maximum: 1000,
+          description: 'Maximum number of events to return. Use smaller values (10-20) for "latest" or "recent" queries, larger (100-1000) for comprehensive history.',
+        },
+        offset: {
+          type: 'number',
+          default: 0,
+          minimum: 0,
+          description: 'Pagination offset for retrieving additional pages of results. Use with limit for pagination.',
+        },
+        failed_only: {
+          type: 'boolean',
+          default: false,
+          description: 'If true, filter to only failed events (success=false). Applied client-side after fetching from API. Use when user asks "What failed?", "Show failures", "Any errors?", etc.',
         },
       },
     },
@@ -553,7 +681,7 @@ export function handleSseConnection(request: Request, env: Env): Response {
             resources: { listChanged: false },
           },
           serverInfo: {
-            name: 'expanso-mcp-server',
+            name: 'vulcan-mcp-server',
             version: '1.0.0',
           },
         },
@@ -673,6 +801,18 @@ interface ToolCallParams {
   arguments?: Record<string, unknown>;
 }
 
+// Helper: Sanitize product name for use as filename
+function sanitizeFilename(name: string): string {
+  // Remove or replace invalid filename characters
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-') // Replace non-alphanumeric with hyphens
+    .replace(/^-+|-+$/g, '') // Remove leading/trailing hyphens
+    .replace(/-+/g, '-') // Replace multiple hyphens with single
+    .substring(0, 100) // Limit length
+    || 'data-product-prd'; // Fallback if empty
+}
+
 // Handle tool calls
 async function handleToolCall(
   id: string | number,
@@ -692,6 +832,30 @@ async function handleToolCall(
       }
 
       const results = await handleSearch(env, query, limit, domain);
+      return {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(results, null, 2),
+            },
+          ],
+        },
+      };
+    }
+
+    case 'search_prds': {
+      const query = args?.query as string;
+      const limit = Math.min((args?.limit as number) || 5, 20);
+      const domain = args?.domain as string | undefined;
+
+      if (!query) {
+        return errorResponse(id, -32602, 'Missing required argument: query');
+      }
+
+      const results = await handleSearchPrds(env, query, limit, domain);
       return {
         jsonrpc: '2.0',
         id,
@@ -1098,6 +1262,177 @@ async function handleToolCall(
           ],
         },
       };
+    }
+
+    case 'get_data_product_prd_questionnaire': {
+      // Return as JSON text so Cursor can render and also reuse it to build answers JSON.
+      const payload = JSON.stringify(PRD_QUESTIONNAIRE_V1, null, 2);
+      return {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          content: [{ type: 'text', text: payload }],
+        },
+      };
+    }
+
+    case 'generate_data_product_prd': {
+      const answers = args?.answers as Partial<PrdAnswers> | undefined;
+
+      if (!answers) {
+        return errorResponse(id, -32602, 'Missing required argument: answers');
+      }
+
+      // Check if answers look like placeholder/example data from the questionnaire
+      const productNameLower = answers.product_name?.toLowerCase() || '';
+      const isPlaceholder = 
+        productNameLower.includes('device360') || 
+        productNameLower.includes('example') ||
+        productNameLower.includes('placeholder') ||
+        productNameLower.includes('sample');
+      
+      if (isPlaceholder) {
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    error: 'Invalid answers: Detected placeholder or example data',
+                    message: 'You provided example/placeholder answers instead of collecting real answers from the user. You MUST: (1) Call get_data_product_prd_questionnaire first, (2) Ask the user each question from the questionnaire, (3) Collect their actual answers, (4) Only then call generate_data_product_prd with the user\'s real answers. DO NOT use example data from the questionnaire.',
+                    hint: 'Start by calling get_data_product_prd_questionnaire, then interview the user with each question.',
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      const v = validateAnswers(answers);
+      if (!v.ok) {
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    error: 'Validation failed',
+                    missing: v.missing,
+                    errors: v.errors,
+                    message: 'You must collect ALL required answers from the user before generating the PRD. Call get_data_product_prd_questionnaire first, then ask the user each question and collect their responses.',
+                    hint: 'Interview the user using the questionnaire, collect all answers, then call generate_data_product_prd again with the complete answers.',
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      const prd = renderPrdMarkdown(answers as PrdAnswers);
+      const productName = (answers as PrdAnswers).product_name;
+      const filename = `${sanitizeFilename(productName)}.md`;
+
+      // Prepend filename comment to markdown so AI can extract and use it when saving
+      // The comment is HTML-style so it won't render in markdown viewers but is visible to AI
+      const prdWithFilename = `<!-- 
+Suggested filename: ${filename}
+This PRD should be saved as: ${filename}
+-->
+
+${prd}`;
+
+      return {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          content: [
+            {
+              type: 'text',
+              text: prdWithFilename,
+            },
+          ],
+        },
+      };
+    }
+
+    case 'vulcan_activity_timeline': {
+      // Check if Vulcan API is configured
+      if (!env.VULCAN_BASE_URL) {
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    error: 'Vulcan API not configured',
+                    message: 'VULCAN_BASE_URL environment variable is not set. This tool requires the Vulcan API to be configured in the production environment.',
+                    hint: 'Set VULCAN_BASE_URL in Cloudflare Workers environment variables (Dashboard → Workers → Settings → Variables) or in wrangler.toml',
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      const action = args?.action as 'plan' | 'run' | undefined;
+      const environment = args?.environment as string | undefined;
+      const after_start_ts = args?.after_start_ts as number | undefined;
+      const model_name = args?.model_name as string[] | undefined;
+      const limit = Math.min((args?.limit as number) || 100, 1000);
+      const offset = (args?.offset as number) || 0;
+      const failed_only = (args?.failed_only as boolean) || false;
+
+      try {
+        const result = await getActivityTimeline(env, {
+          action,
+          environment,
+          after_start_ts,
+          model_name,
+          limit,
+          offset,
+          failed_only,
+        });
+
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          },
+        };
+      } catch (error) {
+        return errorResponse(
+          id,
+          -32603,
+          `Failed to fetch activity timeline: ${error instanceof Error ? error.message : 'Unknown error'}`
+        );
+      }
     }
 
     default:
