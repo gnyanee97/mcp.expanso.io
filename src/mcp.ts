@@ -10,7 +10,7 @@ import { handleSearch, handleSearchPrds, handleListResources, handleReadResource
 import { validatePipelineYaml } from './pipeline-validator';
 import type { components } from './types/validate-api';
 import { getActivityTimeline } from './vulcan/activity';
-import { getTenantConfig } from './vulcan/config';
+import { getTenantConfig, type TenantConfig } from './vulcan/config';
 
 // Typed external validation using validate.expanso.io API contract
 type ValidateResponse = components['schemas']['ValidateResponse'];
@@ -387,7 +387,7 @@ CRITICAL: Use this tool when the user asks about:
 - Failures and errors ("What failed today?", "Show me failures in prod", "Any errors today?", "What broke?")
 - Activity timeline ("Show me activity", "What's the latest activity?", "Recent timeline", "Pipeline status")
 - Time-based queries ("today", "yesterday", "last hour", "recent", "latest")
-- Environment-specific ("prod", "production", "staging", "dev")
+- Environment-specific ("prod", "production", "staging", "dev", "local")
 - Model-specific ("Did model users run?", "Show runs for model X")
 
 IMPORTANT: This tool queries LIVE operational data from Vulcan APIs, NOT documentation. 
@@ -395,10 +395,16 @@ IMPORTANT: This tool queries LIVE operational data from Vulcan APIs, NOT documen
 - Use search_prds for PRD questions
 - Use this tool for "What happened?" / operational status questions
 
+ENVIRONMENT CONFIGURATION:
+- If environment_base_url is not provided and no default is configured, the tool will return an error asking for environment information.
+- When this happens, ask the user: "Which environment would you like to query? Please provide: 1) Environment name (e.g., 'prod', 'local', 'staging'), and 2) The environment's API base URL (e.g., 'http://localhost:8000' or 'https://everest-010626.dataos.app/system/vulcan/vulcan-app')"
+- Then call the tool again with the environment_base_url parameter set to the URL provided by the user.
+
 Examples:
 - "What failed today in prod?" → Set failed_only=true, environment="prod", after_start_ts=today_start_ms
 - "Did model users run?" → Set model_name=["users"]
-- "Show recent activity" → Use default parameters
+- "Show recent activity" → Use default parameters (or ask for environment if not configured)
+- "What happened in local?" → Ask user for local API URL, then set environment_base_url="http://localhost:8000"
 - "What happened in the last hour?" → Set after_start_ts=(now - 3600000)ms
 - "Latest runs" → Set action="run", limit=10
 - "Show me the last plan" → Set action="plan", limit=1
@@ -442,6 +448,10 @@ Returns both raw events and a summary view with breakdown by plans/runs, success
           type: 'boolean',
           default: false,
           description: 'If true, filter to only failed events (success=false). Applied client-side after fetching from API. Use when user asks "What failed?", "Show failures", "Any errors?", etc.',
+        },
+        environment_base_url: {
+          type: 'string',
+          description: 'Base URL for the specific environment to query (e.g., "http://localhost:8000" for local, "https://everest-010626.dataos.app/system/vulcan/vulcan-app" for prod). If not provided, will use default from tenant config. If no default exists, ask the user for the environment name and API URL.',
         },
       },
     },
@@ -1372,34 +1382,6 @@ ${prd}`;
     }
 
     case 'vulcan_activity_timeline': {
-      // Get tenant configuration
-      const tenantConfig = await getTenantConfig(env, tenant);
-      
-      if (!tenantConfig) {
-        return {
-          jsonrpc: '2.0',
-          id,
-          result: {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(
-                  {
-                    error: 'Vulcan API not configured',
-                    message: `Vulcan API configuration not found for tenant "${tenant}". This tool requires the Vulcan API to be configured.`,
-                    hint: `Set tenant configuration in Cloudflare KV:\n  Key: tenant:${tenant}\n  Value: {"VULCAN_BASE_URL": "https://your-vulcan-api.com", "VULCAN_TOKEN": "optional-token"}\n\nOr use wrangler CLI:\n  wrangler kv:key put "tenant:${tenant}" --path config.json\n\nFor backward compatibility, you can also set VULCAN_BASE_URL in environment variables.`,
-                    tenant,
-                  },
-                  null,
-                  2
-                ),
-              },
-            ],
-            isError: true,
-          },
-        };
-      }
-
       const action = args?.action as 'plan' | 'run' | undefined;
       const environment = args?.environment as string | undefined;
       const after_start_ts = args?.after_start_ts as number | undefined;
@@ -1407,6 +1389,50 @@ ${prd}`;
       const limit = Math.min((args?.limit as number) || 100, 1000);
       const offset = (args?.offset as number) || 0;
       const failed_only = (args?.failed_only as boolean) || false;
+      const environment_base_url = args?.environment_base_url as string | undefined;
+
+      // Determine which config to use: environment_base_url parameter takes precedence
+      let tenantConfig: TenantConfig | null;
+      
+      if (environment_base_url) {
+        // Use the provided environment base URL
+        tenantConfig = {
+          VULCAN_BASE_URL: environment_base_url,
+          VULCAN_TOKEN: undefined,
+          VULCAN_AUTH_HEADER: undefined,
+          VULCAN_AUTH_SCHEME: undefined,
+        };
+      } else {
+        // Get tenant configuration from KV/env
+        tenantConfig = await getTenantConfig(env, tenant);
+        
+        // If no config found, return helpful error asking for environment info
+        if (!tenantConfig || !tenantConfig.VULCAN_BASE_URL) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      error: 'Vulcan API environment not specified',
+                      message: 'No Vulcan API base URL configured. Please specify the environment to query.',
+                      action_required: 'Ask the user for: 1) Environment name (e.g., "prod", "local", "staging"), and 2) The environment\'s API base URL (e.g., "http://localhost:8000" or "https://everest-010626.dataos.app/system/vulcan/vulcan-app")',
+                      example: 'User should provide: "prod, https://everest-010626.dataos.app/system/vulcan/vulcan-app" or "local, http://localhost:8000"',
+                      hint: 'You can also configure a default by setting VULCAN_BASE_URL in tenant config or environment variables.',
+                    },
+                    null,
+                    2
+                  ),
+                },
+              ],
+              isError: true,
+            },
+          };
+        }
+      }
 
       try {
         const result = await getActivityTimeline(tenantConfig, {
