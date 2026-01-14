@@ -44,7 +44,12 @@ export async function vulcanGet<T>(
 ): Promise<T> {
   const { baseUrl, auth } = getVulcanConfig(tenantConfig);
 
-  const url = new URL(path, baseUrl);
+  // Ensure baseUrl doesn't have trailing slash for proper URL construction
+  const normalizedBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+  // Ensure path starts with / for proper URL construction
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+
+  const url = new URL(normalizedPath, normalizedBaseUrl);
   for (const [k, v] of Object.entries(query)) {
     if (v !== undefined && v !== null && `${v}`.length > 0) {
       url.searchParams.set(k, String(v));
@@ -53,6 +58,7 @@ export async function vulcanGet<T>(
 
   const headers: Record<string, string> = {
     "Accept": "application/json",
+    "User-Agent": "Vulcan-MCP-Server/1.0", // Add User-Agent header
   };
 
   // Auth header (only add if token is provided)
@@ -64,13 +70,16 @@ export async function vulcanGet<T>(
     }
   }
 
+  // Log the URL being called for debugging
+  console.log(`[Vulcan API] GET ${url.toString()}`);
+
   const res = await fetch(url.toString(), { method: "GET", headers });
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(
-      `Vulcan GET ${url.pathname} failed: ${res.status} ${res.statusText}\n${body}`
-    );
+    const errorMessage = `Vulcan GET ${url.pathname} failed: ${res.status} ${res.statusText}\n${body}\nRequest URL: ${url.toString()}`;
+    console.error(`[Vulcan API Error] ${errorMessage}`);
+    throw new Error(errorMessage);
   }
 
   return (await res.json()) as T;
