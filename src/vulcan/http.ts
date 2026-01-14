@@ -44,12 +44,30 @@ export async function vulcanGet<T>(
 ): Promise<T> {
   const { baseUrl, auth } = getVulcanConfig(tenantConfig);
 
-  // Ensure baseUrl doesn't have trailing slash for proper URL construction
+  // Normalize baseUrl - remove trailing slash
   const normalizedBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-  // Ensure path starts with / for proper URL construction
+  // Normalize path - ensure it starts with / but doesn't replace baseUrl's path
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  
+  // Construct URL properly: if baseUrl has a path, append to it; otherwise use new URL
+  let url: URL;
+  try {
+    const baseUrlObj = new URL(normalizedBaseUrl);
+    // If baseUrl has a path component, append the path to it
+    if (baseUrlObj.pathname && baseUrlObj.pathname !== '/') {
+      const combinedPath = baseUrlObj.pathname.endsWith('/') 
+        ? `${baseUrlObj.pathname}${normalizedPath.slice(1)}` 
+        : `${baseUrlObj.pathname}${normalizedPath}`;
+      url = new URL(combinedPath, `${baseUrlObj.protocol}//${baseUrlObj.host}`);
+    } else {
+      // Base URL has no path, use standard URL construction
+      url = new URL(normalizedPath, normalizedBaseUrl);
+    }
+  } catch (e) {
+    // Fallback: simple string concatenation if URL parsing fails
+    url = new URL(`${normalizedBaseUrl}${normalizedPath}`);
+  }
 
-  const url = new URL(normalizedPath, normalizedBaseUrl);
   for (const [k, v] of Object.entries(query)) {
     if (v !== undefined && v !== null && `${v}`.length > 0) {
       url.searchParams.set(k, String(v));
