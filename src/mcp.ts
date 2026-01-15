@@ -395,19 +395,28 @@ IMPORTANT: This tool queries LIVE operational data from Vulcan APIs, NOT documen
 - Use search_prds for PRD questions
 - Use this tool for "What happened?" / operational status questions
 
-ENVIRONMENT CONFIGURATION:
-- If environment_base_url is not provided and no default is configured, the tool will return an error asking for environment information.
-- When this happens, ask the user: "Which environment would you like to query? Please provide: 1) Environment name (e.g., 'prod', 'local', 'staging'), and 2) The environment's API base URL (e.g., 'http://localhost:8000' or 'https://everest-010626.dataos.app/system/vulcan/vulcan-app')"
-- Then call the tool again with the environment_base_url parameter set to the URL provided by the user.
+ENVIRONMENT CONFIGURATION (REQUIRED):
+- The environment_base_url parameter is ALWAYS required. The tool will NOT use any default configuration.
+- When user asks about any environment (prod, local, staging, etc.), you MUST ask them for the API base URL.
+- Ask the user: "What is the API base URL for the [environment] environment?" where [environment] is detected from their query.
+- If no environment is specified, ask: "Which environment would you like to query? Please provide the environment name and its API base URL."
+
+URL ACCESSIBILITY REQUIREMENTS:
+- The URL MUST be publicly accessible from the internet (Cloudflare Workers cannot access localhost/127.0.0.1).
+- For local environments, users need to expose their API using:
+  - ngrok: "https://abc123.ngrok.io"
+  - Cloudflare Tunnel
+  - Public IP with port forwarding
+- localhost/127.0.0.1 URLs will NOT work from Cloudflare Workers.
 
 Examples:
-- "What failed today in prod?" → Set failed_only=true, environment="prod", after_start_ts=today_start_ms
-- "Did model users run?" → Set model_name=["users"]
-- "Show recent activity" → Use default parameters (or ask for environment if not configured)
-- "What happened in local?" → Ask user for local API URL, then set environment_base_url="http://localhost:8000"
-- "What happened in the last hour?" → Set after_start_ts=(now - 3600000)ms
-- "Latest runs" → Set action="run", limit=10
-- "Show me the last plan" → Set action="plan", limit=1
+- "What failed today in prod?" → Ask: "What is the API base URL for your prod environment?" → User: "https://everest-010626.dataos.app/system/vulcan/vulcan-app" → Set environment_base_url="https://everest-010626.dataos.app/system/vulcan/vulcan-app", failed_only=true, environment="prod", after_start_ts=today_start_ms
+- "Did model users run?" → Ask for environment URL first, then set model_name=["users"]
+- "Show recent activity" → Ask: "Which environment? Please provide the environment name and API base URL."
+- "What happened in local?" → Ask: "What is the API base URL for your local environment? (Note: must be publicly accessible, e.g., via ngrok)" → User: "https://abc123.ngrok.io" → Set environment_base_url="https://abc123.ngrok.io"
+- "What happened in the last hour?" → Ask for environment URL, then set after_start_ts=(now - 3600000)ms
+- "Latest runs" → Ask for environment URL, then set action="run", limit=10
+- "Show me the last plan" → Ask for environment URL, then set action="plan", limit=1
 
 Returns both raw events and a summary view with breakdown by plans/runs, success/failure counts, and latest events.`,
     inputSchema: {
@@ -451,7 +460,7 @@ Returns both raw events and a summary view with breakdown by plans/runs, success
         },
         environment_base_url: {
           type: 'string',
-          description: 'Base URL for the specific environment to query (e.g., "http://localhost:8000" for local, "https://everest-010626.dataos.app/system/vulcan/vulcan-app" for prod). If not provided, will use default from tenant config. If no default exists, ask the user for the environment name and API URL.',
+          description: 'REQUIRED: Base URL for the specific environment to query. Must be publicly accessible from the internet (Cloudflare Workers cannot access localhost/127.0.0.1). Examples: "https://everest-010626.dataos.app/system/vulcan/vulcan-app" for prod, "https://abc123.ngrok.io" for local (via ngrok). For local environments, the user must expose their API using ngrok, Cloudflare Tunnel, or public IP. Always ask the user for this URL before calling the tool.',
         },
       },
     },
@@ -1391,48 +1400,49 @@ ${prd}`;
       const failed_only = (args?.failed_only as boolean) || false;
       const environment_base_url = args?.environment_base_url as string | undefined;
 
-      // Determine which config to use: environment_base_url parameter takes precedence
-      let tenantConfig: TenantConfig | null;
-      
-      if (environment_base_url) {
-        // Use the provided environment base URL
-        tenantConfig = {
-          VULCAN_BASE_URL: environment_base_url,
-          VULCAN_TOKEN: undefined,
-          VULCAN_AUTH_HEADER: undefined,
-          VULCAN_AUTH_SCHEME: undefined,
+      // Always require environment_base_url for dynamic environment selection
+      if (!environment_base_url) {
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    error: 'Vulcan API environment URL required',
+                    message: 'Please specify the environment API base URL to query.',
+                    action_required: 'Ask the user: "What is the API base URL for the [environment] environment?" where [environment] is the environment name mentioned in their query (e.g., "prod", "local", "staging").',
+                    example_questions: [
+                      'If user asks "What failed in prod?" → Ask: "What is the API base URL for your prod environment?"',
+                      'If user asks "Show activity in local" → Ask: "What is the API base URL for your local environment?"',
+                      'If user asks "What happened today?" → Ask: "Which environment would you like to query? Please provide the environment name and its API base URL."',
+                    ],
+                    url_requirements: 'The URL must be publicly accessible from the internet. For local environments, use services like ngrok, Cloudflare Tunnel, or expose via public IP. localhost/127.0.0.1 will NOT work from Cloudflare Workers.',
+                    example_urls: [
+                      'Production: "https://everest-010626.dataos.app/system/vulcan/vulcan-app"',
+                      'Local (via ngrok): "https://abc123.ngrok.io"',
+                      'Public IP: "https://your-public-ip:8000" (if exposed)',
+                    ],
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+            isError: true,
+          },
         };
-      } else {
-        // Get tenant configuration from KV/env
-        tenantConfig = await getTenantConfig(env, tenant);
-        
-        // If no config found, return helpful error asking for environment info
-        if (!tenantConfig || !tenantConfig.VULCAN_BASE_URL) {
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify(
-                    {
-                      error: 'Vulcan API environment not specified',
-                      message: 'No Vulcan API base URL configured. Please specify the environment to query.',
-                      action_required: 'Ask the user for: 1) Environment name (e.g., "prod", "local", "staging"), and 2) The environment\'s API base URL (e.g., "http://localhost:8000" or "https://everest-010626.dataos.app/system/vulcan/vulcan-app")',
-                      example: 'User should provide: "prod, https://everest-010626.dataos.app/system/vulcan/vulcan-app" or "local, http://localhost:8000"',
-                      hint: 'You can also configure a default by setting VULCAN_BASE_URL in tenant config or environment variables.',
-                    },
-                    null,
-                    2
-                  ),
-                },
-              ],
-              isError: true,
-            },
-          };
-        }
       }
+
+      // Use the provided environment base URL
+      const tenantConfig: TenantConfig = {
+        VULCAN_BASE_URL: environment_base_url,
+        VULCAN_TOKEN: undefined,
+        VULCAN_AUTH_HEADER: undefined,
+        VULCAN_AUTH_SCHEME: undefined,
+      };
 
       try {
         const result = await getActivityTimeline(tenantConfig, {
