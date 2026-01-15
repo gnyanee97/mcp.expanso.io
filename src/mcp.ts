@@ -11,7 +11,7 @@ import { validatePipelineYaml } from './pipeline-validator';
 import type { components } from './types/validate-api';
 import { getActivityTimeline } from './vulcan/activity';
 import { getTenantConfig, type TenantConfig } from './vulcan/config';
-import { normalizeApiBaseUrl } from './vulcan/normalize';
+import { normalizeApiBaseUrl, parseVulcanOpenApiUrl } from './vulcan/normalize';
 
 // Typed external validation using validate.expanso.io API contract
 type ValidateResponse = components['schemas']['ValidateResponse'];
@@ -397,13 +397,17 @@ IMPORTANT: This tool queries LIVE operational data from Vulcan APIs, NOT documen
 - Use this tool for "What happened?" / operational status questions
 
 ENVIRONMENT CONFIGURATION (REQUIRED):
-- The api_base_url parameter is ALWAYS required. The tool will NOT use any default configuration.
-- The data_product_name parameter is ALWAYS required. URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}
-- The tenant parameter is ALWAYS required. URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}
+- OPTIONAL: Users can provide openapi_url instead of api_base_url, tenant, and data_product_name separately.
+  Example: "https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json"
+  This automatically extracts all three required fields (api_base_url, tenant, data_product_name).
+- If openapi_url is not provided, then api_base_url, tenant, and data_product_name are REQUIRED.
+- URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}
 - When user asks about any environment (prod, local, staging, etc.), you MUST ask them for:
-  1. API base URL (e.g., "https://everest-010626.dataos.app")
-  2. Data product name (e.g., "sample-vulcan-dp", "vulcan-app")
-  3. Tenant name (e.g., "system")
+  Option A (easier): Ask for openapi_url (e.g., "https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json")
+  Option B: Ask for:
+    1. API base URL (e.g., "https://everest-010626.dataos.app")
+    2. Data product name (e.g., "sample-vulcan-dp", "vulcan-app")
+    3. Tenant name (e.g., "system")
 - CRITICAL WORKFLOW - Follow these steps exactly:
   1. Ask the user: "What is the API base URL for the [environment] environment?" where [environment] is detected from their query.
   2. Wait for user to provide a URL in their response (e.g., "everest-010626.dataos.app" or "https://everest-010626.dataos.app/home").
@@ -422,13 +426,14 @@ URL ACCESSIBILITY REQUIREMENTS:
 - localhost/127.0.0.1 URLs will NOT work from Cloudflare Workers.
 
 Examples:
-- "What failed today in prod?" → Ask: "What is the API base URL for your prod environment?" → User: "https://everest-010626.dataos.app" → Ask: "What is the data product name?" → User: "sample-vulcan-dp" → Ask: "What is the tenant name?" → User: "system" → Set api_base_url="https://everest-010626.dataos.app", data_product_name="sample-vulcan-dp", tenant="system", failed_only=true, environment="prod", after_start_ts=today_start_ms → Final URL: https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/api/v1/activity/timeline
-- "Did model users run?" → Ask for environment URL, data_product_name, and tenant first, then set model_name=["users"]
-- "Show recent activity" → Ask: "Which environment? Please provide: 1) API base URL (e.g., https://everest-010626.dataos.app), 2) Data product name (e.g., sample-vulcan-dp), 3) Tenant name (e.g., system)."
-- "What happened in local?" → Ask: "What is the API base URL for your local environment? (Note: must be publicly accessible, e.g., via ngrok)" → User: "https://abc123.ngrok.io" → Ask: "What is the data product name?" → User: "my-dataproduct" → Ask: "What is the tenant name?" → User: "system" → Set api_base_url="https://abc123.ngrok.io", data_product_name="my-dataproduct", tenant="system" → Final URL: https://abc123.ngrok.io/system/vulcan/my-dataproduct/api/v1/activity/timeline
-- "What happened in the last hour?" → Ask for environment URL, data_product_name, and tenant, then set after_start_ts=(now - 3600000)ms
-- "Latest runs" → Ask for environment URL, data_product_name, and tenant, then set action="run", limit=10
-- "Show me the last plan" → Ask for environment URL, data_product_name, and tenant, then set action="plan", limit=1
+- "What failed today in prod?" → Option A: Ask: "What is the OpenAPI URL for your prod environment?" → User: "https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json" → Set openapi_url="https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json", failed_only=true, environment="prod", after_start_ts=today_start_ms
+- "What failed today in prod?" → Option B: Ask: "What is the API base URL for your prod environment?" → User: "https://everest-010626.dataos.app" → Ask: "What is the data product name?" → User: "sample-vulcan-dp" → Ask: "What is the tenant name?" → User: "system" → Set api_base_url="https://everest-010626.dataos.app", data_product_name="sample-vulcan-dp", tenant="system", failed_only=true, environment="prod", after_start_ts=today_start_ms → Final URL: https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/api/v1/activity/timeline
+- "Did model users run?" → Ask for OpenAPI URL OR (environment URL, data_product_name, tenant) first, then set model_name=["users"]
+- "Show recent activity" → Ask: "Which environment? Please provide either the OpenAPI URL, or: 1) API base URL (e.g., https://everest-010626.dataos.app), 2) Data product name (e.g., sample-vulcan-dp), 3) Tenant name (e.g., system)."
+- "What happened in local?" → Ask: "What is the OpenAPI URL for your local environment? (Note: must be publicly accessible, e.g., via ngrok)" → User: "https://abc123.ngrok.io/system/vulcan/my-dataproduct/openapi.json" → Set openapi_url → Final URL: https://abc123.ngrok.io/system/vulcan/my-dataproduct/api/v1/activity/timeline
+- "What happened in the last hour?" → Ask for OpenAPI URL OR (environment URL, data_product_name, tenant), then set after_start_ts=(now - 3600000)ms
+- "Latest runs" → Ask for OpenAPI URL OR (environment URL, data_product_name, tenant), then set action="run", limit=10
+- "Show me the last plan" → Ask for OpenAPI URL OR (environment URL, data_product_name, tenant), then set action="plan", limit=1
 
 Returns both raw events and a summary view with breakdown by plans/runs, success/failure counts, and latest events.`,
     inputSchema: {
@@ -470,17 +475,21 @@ Returns both raw events and a summary view with breakdown by plans/runs, success
           default: false,
           description: 'If true, filter to only failed events (success=false). Applied client-side after fetching from API. Use when user asks "What failed?", "Show failures", "Any errors?", etc.',
         },
+        openapi_url: {
+          type: 'string',
+          description: 'OPTIONAL: Full OpenAPI URL (e.g., "https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json"). If provided, automatically extracts api_base_url, tenant, and data_product_name. Use this instead of providing the three fields separately for convenience. If not provided, then api_base_url, tenant, and data_product_name are required.',
+        },
         api_base_url: {
           type: 'string',
-          description: 'REQUIRED: API base URL for the specific environment to query. Users can provide the base domain (e.g., "https://everest-010626.dataos.app" or "https://everest-010626.dataos.app/system") - the tool will normalize it and construct the full API path using tenant and data_product_name. Must be publicly accessible from the internet (Cloudflare Workers cannot access localhost/127.0.0.1). For local environments, users must expose their API using ngrok, Cloudflare Tunnel, or public IP. Always ask the user for this URL before calling the tool.',
+          description: 'REQUIRED if openapi_url is not provided: API base URL for the specific environment to query. Users can provide the base domain (e.g., "https://everest-010626.dataos.app") - the tool will normalize it and construct the full API path using tenant and data_product_name. Must be publicly accessible from the internet (Cloudflare Workers cannot access localhost/127.0.0.1). For local environments, users must expose their API using ngrok, Cloudflare Tunnel, or public IP.',
         },
         tenant: {
           type: 'string',
-          description: 'REQUIRED: Tenant name for URL construction (e.g., "system"). URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}',
+          description: 'REQUIRED if openapi_url is not provided: Tenant name for URL construction (e.g., "system"). URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}',
         },
         data_product_name: {
           type: 'string',
-          description: 'REQUIRED: Data product name for URL construction (e.g., "sample-vulcan-dp", "vulcan-app"). URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}. Always ask the user for this if not provided.',
+          description: 'REQUIRED if openapi_url is not provided: Data product name for URL construction (e.g., "sample-vulcan-dp", "vulcan-app"). URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}',
         },
       },
     },
@@ -1418,22 +1427,60 @@ ${prd}`;
       const limit = Math.min((args?.limit as number) || 100, 1000);
       const offset = (args?.offset as number) || 0;
       const failed_only = (args?.failed_only as boolean) || false;
+      const openapi_url = args?.openapi_url as string | undefined;
       const api_base_url = args?.api_base_url as string | undefined;
-      const tenantArg = (args?.tenant as string) || undefined; // Tenant from tool args (optional)
+      const tenantArg = (args?.tenant as string) || undefined;
       const data_product_name = args?.data_product_name as string | undefined;
 
-      // Use tenant from URL path (function parameter), fallback to tool arg, then 'default'
-      const tenantId = tenant || tenantArg || 'default';
+      // If openapi_url is provided, parse it to extract the three fields
+      let parsedFromOpenApi: { api_base_url?: string; tenant?: string; data_product_name?: string } = {};
+      if (openapi_url) {
+        const parsed = parseVulcanOpenApiUrl(openapi_url);
+        if (parsed) {
+          parsedFromOpenApi = {
+            api_base_url: parsed.apiBaseUrl,
+            tenant: parsed.tenant,
+            data_product_name: parsed.dataProductName,
+          };
+          console.log("[MCP Handler] Parsed from openapi_url:", parsedFromOpenApi);
+        } else {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      error: 'Invalid OpenAPI URL format',
+                      message: `Could not parse OpenAPI URL: ${openapi_url}`,
+                      expected_format: 'https://{domain}/{tenant}/vulcan/{data_product_name}/openapi.json',
+                      example: 'https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json',
+                    },
+                    null,
+                    2
+                  ),
+                },
+              ],
+              isError: true,
+            },
+          };
+        }
+      }
+
+      // Use tenant from URL path (function parameter), fallback to tool arg, then parsed, then 'default'
+      const tenantId = tenant || tenantArg || parsedFromOpenApi.tenant || 'default';
       
       // Get tenant config (may have defaults from KV/env)
       const tenantConfig = await getTenantConfig(env, tenantId);
 
-      // Merge tool args with tenant config (tool args take precedence)
+      // Merge: openapi_url parsed values → tool args → tenant config (tool args take precedence)
       const mergedConfig: TenantConfig = {
         ...tenantConfig,
-        api_base_url: api_base_url ? normalizeApiBaseUrl(api_base_url) : tenantConfig.api_base_url,
-        tenant: tenantArg || tenantConfig.tenant, // Use tenant from tool args, not URL path (no default)
-        data_product_name: data_product_name || tenantConfig.data_product_name,
+        api_base_url: api_base_url || parsedFromOpenApi.api_base_url || tenantConfig.api_base_url,
+        tenant: tenantArg || parsedFromOpenApi.tenant || tenantConfig.tenant,
+        data_product_name: data_product_name || parsedFromOpenApi.data_product_name || tenantConfig.data_product_name,
       };
 
       // Log the merged config for debugging
@@ -1458,33 +1505,37 @@ ${prd}`;
                 text: JSON.stringify(
                   {
                     error: 'Vulcan API configuration required',
-                    message: 'Please specify the API base URL, data product name, and optionally tenant name.',
+                    message: 'Please specify either openapi_url OR provide api_base_url, data_product_name, and tenant separately.',
                     action_required: 'CRITICAL: Ask the user for required information, then when they respond, you MUST extract the values and pass them as parameters in your next tool call.',
                     step_by_step: [
-                      'Step 1: Ask the user: "What is the API base URL for the [environment] environment?" where [environment] is detected from their query (e.g., "prod", "local", "staging").',
+                      'Option A (easier): Ask the user: "What is the OpenAPI URL for the [environment] environment?" (e.g., "https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json"). Then call the tool with openapi_url parameter.',
+                      'Option B: Ask the user: "What is the API base URL for the [environment] environment?" where [environment] is detected from their query (e.g., "prod", "local", "staging").',
                       'Step 2: Wait for user response with a URL (e.g., "https://everest-010626.dataos.app" or "everest-010626.dataos.app/home").',
                       'Step 3: Ask the user: "What is the data product name?" (e.g., "sample-vulcan-dp", "vulcan-app").',
-                      'Step 4: Optionally ask: "What is the tenant name?" (defaults to "system" if not provided).',
+                      'Step 4: Ask the user: "What is the tenant name?" (e.g., "system").',
                       'Step 5: Extract the URL from their response (add https:// if missing, handle variations like missing protocol, trailing slashes, etc.).',
-                      'Step 6: Call the tool again with api_base_url, data_product_name, and tenant parameters, along with ALL other parameters from the original request (action, environment, failed_only, limit, etc.).',
+                      'Step 6: Call the tool again with either openapi_url OR (api_base_url, data_product_name, tenant) parameters, along with ALL other parameters from the original request (action, environment, failed_only, limit, etc.).',
                     ],
                     example_questions: [
-                      'If user asks "What failed in prod?" → Ask: "What is the API base URL for your prod environment?" → User: "everest-010626.dataos.app" → Ask: "What is the data product name?" → User: "sample-vulcan-dp" → Ask: "What is the tenant name?" → User: "system" → Call tool with api_base_url="https://everest-010626.dataos.app", data_product_name="sample-vulcan-dp", tenant="system", failed_only=true, environment="prod", and all other original parameters',
-                      'If user asks "Show activity in local" → Ask: "What is the API base URL for your local environment?" → User: "https://abc123.ngrok.io" → Ask: "What is the data product name?" → User: "my-dataproduct" → Ask: "What is the tenant name?" → User: "system" → Call tool with api_base_url="https://abc123.ngrok.io", data_product_name="my-dataproduct", tenant="system" and all other original parameters',
-                      'If user asks "What happened today?" → Ask: "Which environment? Please provide: 1) API base URL, 2) Data product name, 3) Tenant name." → User responds → Extract and use all parameters',
+                      'If user asks "What failed in prod?" → Option A: Ask: "What is the OpenAPI URL for your prod environment?" → User: "https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json" → Call tool with openapi_url="https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json", failed_only=true, environment="prod", and all other original parameters',
+                      'If user asks "What failed in prod?" → Option B: Ask: "What is the API base URL for your prod environment?" → User: "everest-010626.dataos.app" → Ask: "What is the data product name?" → User: "sample-vulcan-dp" → Ask: "What is the tenant name?" → User: "system" → Call tool with api_base_url="https://everest-010626.dataos.app", data_product_name="sample-vulcan-dp", tenant="system", failed_only=true, environment="prod", and all other original parameters',
+                      'If user asks "Show activity in local" → Ask: "What is the OpenAPI URL for your local environment?" → User: "https://abc123.ngrok.io/system/vulcan/my-dataproduct/openapi.json" → Call tool with openapi_url and all other original parameters',
+                      'If user asks "What happened today?" → Ask: "Which environment? Please provide either the OpenAPI URL, or provide: 1) API base URL, 2) Data product name, 3) Tenant name." → User responds → Extract and use all parameters',
                     ],
                     url_requirements: 'The URL must be publicly accessible from the internet. For local environments, use services like ngrok, Cloudflare Tunnel, or expose via public IP. localhost/127.0.0.1 will NOT work from Cloudflare Workers.',
                     url_format: 'URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}/api/v1/...',
                     example_urls: [
+                      'OpenAPI URL (recommended): "https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json" → Automatically extracts all three fields',
                       'Base domain: "https://everest-010626.dataos.app" → Normalized and combined with tenant/data_product_name',
                       'With tenant path: "https://everest-010626.dataos.app/system" → Normalized and combined with data_product_name',
                       'Home page: "https://everest-010626.dataos.app/home/" → Strips /home/, normalizes, then combines',
                       'Local (via ngrok): "https://abc123.ngrok.io" → Normalized and combined with tenant/data_product_name',
                     ],
                     required_parameters: [
-                      'api_base_url: Base API URL (e.g., "https://everest-010626.dataos.app")',
-                      'data_product_name: Data product name (e.g., "sample-vulcan-dp", "vulcan-app")',
-                      'tenant: Tenant name (e.g., "system")',
+                      'Option A (recommended): openapi_url: Full OpenAPI URL (e.g., "https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json")',
+                      'Option B: api_base_url: Base API URL (e.g., "https://everest-010626.dataos.app")',
+                      'Option B: data_product_name: Data product name (e.g., "sample-vulcan-dp", "vulcan-app")',
+                      'Option B: tenant: Tenant name (e.g., "system")',
                     ],
                   },
                   null,
