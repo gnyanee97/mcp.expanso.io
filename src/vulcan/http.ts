@@ -39,11 +39,27 @@ export function normalizeVulcanBaseUrl(userUrl: string): string {
     // Remove any existing path (like /home/, /dashboard/, etc.)
     return `${url.protocol}//${url.host}/system/vulcan/vulcan-app`;
   } catch (e) {
-    // If URL parsing fails, try to append API path directly
-    const normalized = userUrl.endsWith('/') ? userUrl.slice(0, -1) : userUrl;
+    // If URL parsing fails (e.g., missing protocol), try to handle it
+    let normalized = userUrl.endsWith('/') ? userUrl.slice(0, -1) : userUrl;
+    
+    // If already has API path, use as-is
     if (normalized.includes('/system/vulcan/vulcan-app')) {
       return normalized;
     }
+    
+    // Try to extract base domain (everything before first /)
+    // This handles cases like "everest-010626.dataos.app/home"
+    const firstSlashIndex = normalized.indexOf('/');
+    if (firstSlashIndex > 0) {
+      // Has a path, extract just the domain
+      normalized = normalized.substring(0, firstSlashIndex);
+    }
+    
+    // Add protocol if missing and append API path
+    if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
+      normalized = `https://${normalized}`;
+    }
+    
     return `${normalized}/system/vulcan/vulcan-app`;
   }
 }

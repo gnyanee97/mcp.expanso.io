@@ -11,7 +11,6 @@ import { validatePipelineYaml } from './pipeline-validator';
 import type { components } from './types/validate-api';
 import { getActivityTimeline } from './vulcan/activity';
 import { getTenantConfig, type TenantConfig } from './vulcan/config';
-import { normalizeVulcanBaseUrl } from './vulcan/http';
 
 // Typed external validation using validate.expanso.io API contract
 type ValidateResponse = components['schemas']['ValidateResponse'];
@@ -1450,9 +1449,9 @@ ${prd}`;
         };
       }
 
-      // Use the provided environment base URL (normalize it first to strip UI paths like /home/)
+      // Use the provided environment base URL (normalization happens in getVulcanConfig)
       const tenantConfig: TenantConfig = {
-        VULCAN_BASE_URL: normalizeVulcanBaseUrl(environment_base_url),
+        VULCAN_BASE_URL: environment_base_url,
         VULCAN_TOKEN: undefined,
         VULCAN_AUTH_HEADER: undefined,
         VULCAN_AUTH_SCHEME: undefined,
