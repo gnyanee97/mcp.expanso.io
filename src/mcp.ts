@@ -398,7 +398,11 @@ IMPORTANT: This tool queries LIVE operational data from Vulcan APIs, NOT documen
 ENVIRONMENT CONFIGURATION (REQUIRED):
 - The environment_base_url parameter is ALWAYS required. The tool will NOT use any default configuration.
 - When user asks about any environment (prod, local, staging, etc.), you MUST ask them for the API base URL.
-- Ask the user: "What is the API base URL for the [environment] environment?" where [environment] is detected from their query.
+- CRITICAL WORKFLOW - Follow these steps exactly:
+  1. Ask the user: "What is the API base URL for the [environment] environment?" where [environment] is detected from their query.
+  2. Wait for user to provide a URL in their response (e.g., "everest-010626.dataos.app" or "https://everest-010626.dataos.app/home").
+  3. Extract the URL from their response (handle variations: add https:// if missing, remove trailing slashes, handle paths like /home/).
+  4. Call the tool again with environment_base_url parameter set to the extracted URL, along with ALL other parameters from the original request (action, environment, failed_only, limit, offset, model_name, after_start_ts, etc.).
 - If no environment is specified, ask: "Which environment would you like to query? Please provide the environment name and its API base URL."
 
 URL ACCESSIBILITY REQUIREMENTS:
@@ -1413,11 +1417,17 @@ ${prd}`;
                   {
                     error: 'Vulcan API environment URL required',
                     message: 'Please specify the environment API base URL to query.',
-                    action_required: 'Ask the user: "What is the API base URL for the [environment] environment?" where [environment] is the environment name mentioned in their query (e.g., "prod", "local", "staging").',
+                    action_required: 'CRITICAL: Ask the user for the URL, then when they respond with a URL, you MUST extract that URL and pass it as the environment_base_url parameter in your next tool call.',
+                    step_by_step: [
+                      'Step 1: Ask the user: "What is the API base URL for the [environment] environment?" where [environment] is detected from their query (e.g., "prod", "local", "staging").',
+                      'Step 2: Wait for user response with a URL (e.g., "https://everest-010626.dataos.app" or "everest-010626.dataos.app/home").',
+                      'Step 3: Extract the URL from their response (add https:// if missing, handle variations like missing protocol, trailing slashes, etc.).',
+                      'Step 4: Call the tool again with environment_base_url parameter set to the extracted URL, along with ALL other parameters from the original request (action, environment, failed_only, limit, etc.).',
+                    ],
                     example_questions: [
-                      'If user asks "What failed in prod?" → Ask: "What is the API base URL for your prod environment?"',
-                      'If user asks "Show activity in local" → Ask: "What is the API base URL for your local environment?"',
-                      'If user asks "What happened today?" → Ask: "Which environment would you like to query? Please provide the environment name and its API base URL."',
+                      'If user asks "What failed in prod?" → Ask: "What is the API base URL for your prod environment?" → User responds: "everest-010626.dataos.app" → Extract URL → Call tool with environment_base_url="https://everest-010626.dataos.app" (add https:// if missing), failed_only=true, environment="prod", and all other original parameters',
+                      'If user asks "Show activity in local" → Ask: "What is the API base URL for your local environment?" → User responds: "https://abc123.ngrok.io" → Call tool with environment_base_url="https://abc123.ngrok.io" and all other original parameters',
+                      'If user asks "What happened today?" → Ask: "Which environment? Please provide the API base URL." → User responds with URL → Extract and use it in environment_base_url parameter with all other original parameters',
                     ],
                     url_requirements: 'The URL must be publicly accessible from the internet. For local environments, use services like ngrok, Cloudflare Tunnel, or expose via public IP. localhost/127.0.0.1 will NOT work from Cloudflare Workers.',
                     url_format: 'Users can provide the base domain URL (e.g., "https://everest-010626.dataos.app" or "https://everest-010626.dataos.app/home/"). The tool will automatically append the API path (/system/vulcan/vulcan-app).',
