@@ -309,6 +309,12 @@ export interface Env {
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    // Log incoming request at entrypoint
+    console.log("[mcp] incoming", {
+      method: request.method,
+      url: request.url,
+    });
+
     const url = new URL(request.url);
 
     // CORS headers for all responses
