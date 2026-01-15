@@ -7,11 +7,16 @@
 import type { Env } from '../index';
 
 export interface TenantConfig {
-  VULCAN_BASE_URL: string;
-  VULCAN_TOKEN?: string;
-  VULCAN_AUTH_HEADER?: string;
-  VULCAN_AUTH_SCHEME?: string;
-  default_environment?: string;
+  api_base_url?: string;        // e.g. https://everest-010626.dataos.app/system
+  tenant?: string;              // e.g. system
+  data_product_name?: string;  // e.g. sample-vulcan-dp
+  vulcan_token?: string;        // API authentication token (should be from Worker secret/env)
+  VULCAN_BASE_URL?: string;     // Legacy: backward compatibility
+  VULCAN_TOKEN?: string;        // Legacy: backward compatibility
+  VULCAN_AUTH_HEADER?: string;  // Legacy: backward compatibility
+  VULCAN_AUTH_SCHEME?: string;  // Legacy: backward compatibility
+  default_environment?: string; // Legacy: backward compatibility
+  dataproduct_name?: string;    // Legacy: backward compatibility (use data_product_name)
 }
 
 /**
@@ -20,36 +25,37 @@ export interface TenantConfig {
  */
 export async function getTenantConfig(
   env: Env,
-  tenant: string
-): Promise<TenantConfig | null> {
-  // Try to read from KV first
+  tenantId: string
+): Promise<TenantConfig> {
+  // 1) Try to read from KV first
+  let kvConfig: TenantConfig | null = null;
   if (env.VULCAN_CONFIG) {
     try {
-      const kvKey = `tenant:${tenant}`;
-      const configJson = await env.VULCAN_CONFIG.get(kvKey);
-      
-      if (configJson) {
-        const config = JSON.parse(configJson) as TenantConfig;
-        if (config.VULCAN_BASE_URL) {
-          return config;
-        }
+      const kvKey = `tenant:${tenantId}`;
+      const raw = await env.VULCAN_CONFIG.get(kvKey);
+      if (raw) {
+        kvConfig = JSON.parse(raw) as TenantConfig;
       }
     } catch (error) {
-      console.error(`Failed to read tenant config for ${tenant}:`, error);
+      console.error(`Failed to read tenant config for ${tenantId}:`, error);
       // Fall through to env var fallback
     }
   }
 
-  // Fallback to environment variables (for backward compatibility)
-  if (env.VULCAN_BASE_URL) {
-    return {
-      VULCAN_BASE_URL: env.VULCAN_BASE_URL,
-      VULCAN_TOKEN: env.VULCAN_TOKEN,
-      VULCAN_AUTH_HEADER: env.VULCAN_AUTH_HEADER,
-      VULCAN_AUTH_SCHEME: env.VULCAN_AUTH_SCHEME,
-    };
-  }
+  // 2) Build config from environment variables (with backward compatibility)
+  const envConfig: TenantConfig = {
+    api_base_url: env.VULCAN_API_BASE_URL || env.VULCAN_BASE_URL, // New format or legacy
+    tenant: env.VULCAN_TENANT,
+    data_product_name: env.VULCAN_DATA_PRODUCT_NAME,
+    vulcan_token: env.VULCAN_TOKEN, // Should be from Worker secret
+    // Legacy fields for backward compatibility
+    VULCAN_BASE_URL: env.VULCAN_BASE_URL,
+    VULCAN_TOKEN: env.VULCAN_TOKEN,
+    VULCAN_AUTH_HEADER: env.VULCAN_AUTH_HEADER,
+    VULCAN_AUTH_SCHEME: env.VULCAN_AUTH_SCHEME,
+  };
 
-  return null;
+  // Merge: KV config overrides env config
+  return { ...envConfig, ...(kvConfig ?? {}) };
 }
 

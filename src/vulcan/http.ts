@@ -5,6 +5,7 @@
  */
 
 import type { TenantConfig } from './config';
+import { buildVulcanBaseUrl, normalizeApiBaseUrl, type VulcanTarget } from './normalize';
 
 export type VulcanAuth = {
   headerName: string;      // e.g. "Authorization" or "X-API-Key"
@@ -18,65 +19,58 @@ export interface VulcanConfig {
 }
 
 /**
- * Normalize user-provided URL to Vulcan API base URL.
- * Users typically provide base domain (e.g., https://everest-010626.dataos.app)
- * or home page (e.g., https://everest-010626.dataos.app/home/),
- * but we need the API path: /system/vulcan/vulcan-app
+ * Resolve Vulcan target from configuration.
+ * Validates that all required fields are present.
  */
-export function normalizeVulcanBaseUrl(userUrl: string): string {
-  try {
-    const url = new URL(userUrl);
-    
-    // If URL already contains the API path, use as-is
-    if (url.pathname.includes('/system/vulcan/vulcan-app')) {
-      // Extract up to and including /system/vulcan/vulcan-app
-      const apiPathIndex = url.pathname.indexOf('/system/vulcan/vulcan-app');
-      const basePath = url.pathname.substring(0, apiPathIndex + '/system/vulcan/vulcan-app'.length);
-      return `${url.protocol}//${url.host}${basePath}`;
-    }
-    
-    // Otherwise, extract base domain and append API path
-    // Remove any existing path (like /home/, /dashboard/, etc.)
-    return `${url.protocol}//${url.host}/system/vulcan/vulcan-app`;
-  } catch (e) {
-    // If URL parsing fails (e.g., missing protocol), try to handle it
-    let normalized = userUrl.endsWith('/') ? userUrl.slice(0, -1) : userUrl;
-    
-    // If already has API path, use as-is
-    if (normalized.includes('/system/vulcan/vulcan-app')) {
-      return normalized;
-    }
-    
-    // Try to extract base domain (everything before first /)
-    // This handles cases like "everest-010626.dataos.app/home"
-    const firstSlashIndex = normalized.indexOf('/');
-    if (firstSlashIndex > 0) {
-      // Has a path, extract just the domain
-      normalized = normalized.substring(0, firstSlashIndex);
-    }
-    
-    // Add protocol if missing and append API path
-    if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
-      normalized = `https://${normalized}`;
-    }
-    
-    return `${normalized}/system/vulcan/vulcan-app`;
+export function resolveVulcanTarget(cfg: TenantConfig): VulcanTarget {
+  const apiBaseUrl = cfg.api_base_url;
+  const tenant = cfg.tenant;
+  const dataProductName = cfg.data_product_name || cfg.dataproduct_name; // Support both names
+  
+  const missing: string[] = [];
+  if (!apiBaseUrl) missing.push("api_base_url");
+  if (!tenant) missing.push("tenant");
+  if (!dataProductName) missing.push("data_product_name");
+  
+  if (missing.length) {
+    throw new Error(
+      `Missing Vulcan target config: ${missing.join(", ")}. ` +
+      `Provide these in the tool call or set them in KV (tenant:default) or env vars.`
+    );
   }
+  
+  // TypeScript now knows these are not undefined after the checks above
+  return {
+    apiBaseUrl: apiBaseUrl!,
+    tenant: tenant!,
+    dataProductName: dataProductName!,
+  };
 }
 
 /**
  * Create VulcanConfig from tenant configuration.
- * Accepts either TenantConfig (from KV) or legacy env vars.
+ * Constructs the base URL using: {api_base_url}/{tenant}/vulcan/{data_product_name}
  */
 export function getVulcanConfig(tenantConfig: TenantConfig | null): VulcanConfig {
-  if (!tenantConfig || !tenantConfig.VULCAN_BASE_URL) {
-    throw new Error("Missing VULCAN_BASE_URL in tenant configuration");
+  if (!tenantConfig) {
+    throw new Error("Missing tenant configuration");
   }
 
-  // Normalize the base URL (handles user-provided base domains)
-  const baseUrl = normalizeVulcanBaseUrl(tenantConfig.VULCAN_BASE_URL);
-  console.log(`[Vulcan Config] Input URL: ${tenantConfig.VULCAN_BASE_URL}, Normalized: ${baseUrl}`);
-  const token = tenantConfig.VULCAN_TOKEN || ''; // Optional - default to empty if not provided
+  // Resolve and validate target
+  const target = resolveVulcanTarget(tenantConfig);
+  
+  // Build the base URL
+  const baseUrl = buildVulcanBaseUrl(target);
+  
+  console.log("[Vulcan Config]", {
+    apiBaseUrl: target.apiBaseUrl,
+    tenant: target.tenant,
+    dataProductName: target.dataProductName,
+    normalizedBaseUrl: baseUrl,
+  });
+
+  // Get token (prefer vulcan_token, fallback to VULCAN_TOKEN for backward compat)
+  const token = tenantConfig.vulcan_token || tenantConfig.VULCAN_TOKEN || '';
   const headerName = tenantConfig.VULCAN_AUTH_HEADER || "Authorization";
   const scheme = tenantConfig.VULCAN_AUTH_SCHEME || "Bearer";
 

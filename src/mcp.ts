@@ -11,6 +11,7 @@ import { validatePipelineYaml } from './pipeline-validator';
 import type { components } from './types/validate-api';
 import { getActivityTimeline } from './vulcan/activity';
 import { getTenantConfig, type TenantConfig } from './vulcan/config';
+import { normalizeApiBaseUrl } from './vulcan/normalize';
 
 // Typed external validation using validate.expanso.io API contract
 type ValidateResponse = components['schemas']['ValidateResponse'];
@@ -396,14 +397,20 @@ IMPORTANT: This tool queries LIVE operational data from Vulcan APIs, NOT documen
 - Use this tool for "What happened?" / operational status questions
 
 ENVIRONMENT CONFIGURATION (REQUIRED):
-- The environment_base_url parameter is ALWAYS required. The tool will NOT use any default configuration.
-- When user asks about any environment (prod, local, staging, etc.), you MUST ask them for the API base URL.
+- The api_base_url parameter is ALWAYS required. The tool will NOT use any default configuration.
+- The data_product_name parameter is ALWAYS required. URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}
+- When user asks about any environment (prod, local, staging, etc.), you MUST ask them for:
+  1. API base URL (e.g., "https://everest-010626.dataos.app")
+  2. Data product name (e.g., "sample-vulcan-dp", "vulcan-app")
+  3. Tenant name (optional, defaults to "system" if not provided)
 - CRITICAL WORKFLOW - Follow these steps exactly:
   1. Ask the user: "What is the API base URL for the [environment] environment?" where [environment] is detected from their query.
   2. Wait for user to provide a URL in their response (e.g., "everest-010626.dataos.app" or "https://everest-010626.dataos.app/home").
-  3. Extract the URL from their response (handle variations: add https:// if missing, remove trailing slashes, handle paths like /home/).
-  4. Call the tool again with environment_base_url parameter set to the extracted URL, along with ALL other parameters from the original request (action, environment, failed_only, limit, offset, model_name, after_start_ts, etc.).
-- If no environment is specified, ask: "Which environment would you like to query? Please provide the environment name and its API base URL."
+  3. Ask the user: "What is the data product name?" (e.g., "sample-vulcan-dp")
+  4. Optionally ask: "What is the tenant name?" (defaults to "system" if not provided)
+  5. Extract the URL from their response (handle variations: add https:// if missing, remove trailing slashes, handle paths like /home/).
+  6. Call the tool again with api_base_url, data_product_name, and tenant parameters, along with ALL other parameters from the original request (action, environment, failed_only, limit, offset, model_name, after_start_ts, etc.).
+- If no environment is specified, ask: "Which environment would you like to query? Please provide: 1) Environment name, 2) API base URL, 3) Data product name, 4) Tenant name (optional, defaults to 'system')."
 
 URL ACCESSIBILITY REQUIREMENTS:
 - The URL MUST be publicly accessible from the internet (Cloudflare Workers cannot access localhost/127.0.0.1).
@@ -414,13 +421,13 @@ URL ACCESSIBILITY REQUIREMENTS:
 - localhost/127.0.0.1 URLs will NOT work from Cloudflare Workers.
 
 Examples:
-- "What failed today in prod?" → Ask: "What is the API base URL for your prod environment?" → User: "https://everest-010626.dataos.app" or "https://everest-010626.dataos.app/home/" → Tool auto-appends API path → Set environment_base_url="https://everest-010626.dataos.app", failed_only=true, environment="prod", after_start_ts=today_start_ms
-- "Did model users run?" → Ask for environment URL first, then set model_name=["users"]
-- "Show recent activity" → Ask: "Which environment? Please provide the environment name and API base URL (base domain is fine, e.g., https://everest-010626.dataos.app)."
-- "What happened in local?" → Ask: "What is the API base URL for your local environment? (Note: must be publicly accessible, e.g., via ngrok)" → User: "https://abc123.ngrok.io" → Tool auto-appends API path → Set environment_base_url="https://abc123.ngrok.io"
-- "What happened in the last hour?" → Ask for environment URL, then set after_start_ts=(now - 3600000)ms
-- "Latest runs" → Ask for environment URL, then set action="run", limit=10
-- "Show me the last plan" → Ask for environment URL, then set action="plan", limit=1
+- "What failed today in prod?" → Ask: "What is the API base URL for your prod environment?" → User: "https://everest-010626.dataos.app" → Ask: "What is the data product name?" → User: "sample-vulcan-dp" → Set api_base_url="https://everest-010626.dataos.app", data_product_name="sample-vulcan-dp", tenant="system", failed_only=true, environment="prod", after_start_ts=today_start_ms → Final URL: https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/api/v1/activity/timeline
+- "Did model users run?" → Ask for environment URL and data_product_name first, then set model_name=["users"]
+- "Show recent activity" → Ask: "Which environment? Please provide: 1) API base URL (e.g., https://everest-010626.dataos.app), 2) Data product name (e.g., sample-vulcan-dp), 3) Tenant name (optional, defaults to 'system')."
+- "What happened in local?" → Ask: "What is the API base URL for your local environment? (Note: must be publicly accessible, e.g., via ngrok)" → User: "https://abc123.ngrok.io" → Ask: "What is the data product name?" → User: "my-dataproduct" → Set api_base_url="https://abc123.ngrok.io", data_product_name="my-dataproduct", tenant="system" → Final URL: https://abc123.ngrok.io/system/vulcan/my-dataproduct/api/v1/activity/timeline
+- "What happened in the last hour?" → Ask for environment URL and data_product_name, then set after_start_ts=(now - 3600000)ms
+- "Latest runs" → Ask for environment URL and data_product_name, then set action="run", limit=10
+- "Show me the last plan" → Ask for environment URL and data_product_name, then set action="plan", limit=1
 
 Returns both raw events and a summary view with breakdown by plans/runs, success/failure counts, and latest events.`,
     inputSchema: {
@@ -462,9 +469,18 @@ Returns both raw events and a summary view with breakdown by plans/runs, success
           default: false,
           description: 'If true, filter to only failed events (success=false). Applied client-side after fetching from API. Use when user asks "What failed?", "Show failures", "Any errors?", etc.',
         },
-        environment_base_url: {
+        api_base_url: {
           type: 'string',
-          description: 'REQUIRED: Base URL for the specific environment to query. Users can provide the base domain (e.g., "https://everest-010626.dataos.app" or "https://everest-010626.dataos.app/home/") - the tool will automatically append the API path (/system/vulcan/vulcan-app). Must be publicly accessible from the internet (Cloudflare Workers cannot access localhost/127.0.0.1). For local environments, users must expose their API using ngrok, Cloudflare Tunnel, or public IP. Always ask the user for this URL before calling the tool.',
+          description: 'REQUIRED: API base URL for the specific environment to query. Users can provide the base domain (e.g., "https://everest-010626.dataos.app" or "https://everest-010626.dataos.app/system") - the tool will normalize it and construct the full API path using tenant and data_product_name. Must be publicly accessible from the internet (Cloudflare Workers cannot access localhost/127.0.0.1). For local environments, users must expose their API using ngrok, Cloudflare Tunnel, or public IP. Always ask the user for this URL before calling the tool.',
+        },
+        tenant: {
+          type: 'string',
+          description: 'Tenant name for URL construction (e.g., "system"). Defaults to "system" if not provided. URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}',
+          default: 'system',
+        },
+        data_product_name: {
+          type: 'string',
+          description: 'REQUIRED: Data product name for URL construction (e.g., "sample-vulcan-dp", "vulcan-app"). URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}. Always ask the user for this if not provided.',
         },
       },
     },
@@ -1402,10 +1418,23 @@ ${prd}`;
       const limit = Math.min((args?.limit as number) || 100, 1000);
       const offset = (args?.offset as number) || 0;
       const failed_only = (args?.failed_only as boolean) || false;
-      const environment_base_url = args?.environment_base_url as string | undefined;
+      const api_base_url = args?.api_base_url as string | undefined;
+      const tenant = (args?.tenant as string) || 'system'; // Default to 'system'
+      const data_product_name = args?.data_product_name as string | undefined;
 
-      // Always require environment_base_url for dynamic environment selection
-      if (!environment_base_url) {
+      // Get tenant config (may have defaults)
+      const tenantConfig = await getTenantConfig(env, tenant);
+
+      // Merge tool args with tenant config (tool args take precedence)
+      const mergedConfig: TenantConfig = {
+        ...tenantConfig,
+        api_base_url: api_base_url ? normalizeApiBaseUrl(api_base_url) : tenantConfig.api_base_url,
+        tenant: tenant || tenantConfig.tenant || 'system',
+        data_product_name: data_product_name || tenantConfig.data_product_name,
+      };
+
+      // Always require api_base_url for dynamic environment selection
+      if (!mergedConfig.api_base_url) {
         return {
           jsonrpc: '2.0',
           id,
@@ -1415,28 +1444,34 @@ ${prd}`;
                 type: 'text',
                 text: JSON.stringify(
                   {
-                    error: 'Vulcan API environment URL required',
-                    message: 'Please specify the environment API base URL to query.',
-                    action_required: 'CRITICAL: Ask the user for the URL, then when they respond with a URL, you MUST extract that URL and pass it as the environment_base_url parameter in your next tool call.',
+                    error: 'Vulcan API configuration required',
+                    message: 'Please specify the API base URL, data product name, and optionally tenant name.',
+                    action_required: 'CRITICAL: Ask the user for required information, then when they respond, you MUST extract the values and pass them as parameters in your next tool call.',
                     step_by_step: [
                       'Step 1: Ask the user: "What is the API base URL for the [environment] environment?" where [environment] is detected from their query (e.g., "prod", "local", "staging").',
                       'Step 2: Wait for user response with a URL (e.g., "https://everest-010626.dataos.app" or "everest-010626.dataos.app/home").',
-                      'Step 3: Extract the URL from their response (add https:// if missing, handle variations like missing protocol, trailing slashes, etc.).',
-                      'Step 4: Call the tool again with environment_base_url parameter set to the extracted URL, along with ALL other parameters from the original request (action, environment, failed_only, limit, etc.).',
+                      'Step 3: Ask the user: "What is the data product name?" (e.g., "sample-vulcan-dp", "vulcan-app").',
+                      'Step 4: Optionally ask: "What is the tenant name?" (defaults to "system" if not provided).',
+                      'Step 5: Extract the URL from their response (add https:// if missing, handle variations like missing protocol, trailing slashes, etc.).',
+                      'Step 6: Call the tool again with api_base_url, data_product_name, and tenant parameters, along with ALL other parameters from the original request (action, environment, failed_only, limit, etc.).',
                     ],
                     example_questions: [
-                      'If user asks "What failed in prod?" → Ask: "What is the API base URL for your prod environment?" → User responds: "everest-010626.dataos.app" → Extract URL → Call tool with environment_base_url="https://everest-010626.dataos.app" (add https:// if missing), failed_only=true, environment="prod", and all other original parameters',
-                      'If user asks "Show activity in local" → Ask: "What is the API base URL for your local environment?" → User responds: "https://abc123.ngrok.io" → Call tool with environment_base_url="https://abc123.ngrok.io" and all other original parameters',
-                      'If user asks "What happened today?" → Ask: "Which environment? Please provide the API base URL." → User responds with URL → Extract and use it in environment_base_url parameter with all other original parameters',
+                      'If user asks "What failed in prod?" → Ask: "What is the API base URL for your prod environment?" → User: "everest-010626.dataos.app" → Ask: "What is the data product name?" → User: "sample-vulcan-dp" → Call tool with api_base_url="https://everest-010626.dataos.app", data_product_name="sample-vulcan-dp", tenant="system", failed_only=true, environment="prod", and all other original parameters',
+                      'If user asks "Show activity in local" → Ask: "What is the API base URL for your local environment?" → User: "https://abc123.ngrok.io" → Ask: "What is the data product name?" → User: "my-dataproduct" → Call tool with api_base_url="https://abc123.ngrok.io", data_product_name="my-dataproduct", tenant="system" and all other original parameters',
+                      'If user asks "What happened today?" → Ask: "Which environment? Please provide: 1) API base URL, 2) Data product name, 3) Tenant name (optional, defaults to \'system\')." → User responds → Extract and use all parameters',
                     ],
                     url_requirements: 'The URL must be publicly accessible from the internet. For local environments, use services like ngrok, Cloudflare Tunnel, or expose via public IP. localhost/127.0.0.1 will NOT work from Cloudflare Workers.',
-                    url_format: 'Users can provide the base domain URL (e.g., "https://everest-010626.dataos.app" or "https://everest-010626.dataos.app/home/"). The tool will automatically append the API path (/system/vulcan/vulcan-app).',
+                    url_format: 'URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}/api/v1/...',
                     example_urls: [
-                      'Base domain: "https://everest-010626.dataos.app" (will auto-append API path)',
-                      'Home page: "https://everest-010626.dataos.app/home/" (will auto-append API path)',
-                      'Full API path: "https://everest-010626.dataos.app/system/vulcan/vulcan-app" (used as-is)',
-                      'Local (via ngrok): "https://abc123.ngrok.io" (will auto-append API path)',
-                      'Public IP: "https://your-public-ip:8000" (will auto-append API path if exposed)',
+                      'Base domain: "https://everest-010626.dataos.app" → Normalized and combined with tenant/data_product_name',
+                      'With tenant path: "https://everest-010626.dataos.app/system" → Normalized and combined with data_product_name',
+                      'Home page: "https://everest-010626.dataos.app/home/" → Strips /home/, normalizes, then combines',
+                      'Local (via ngrok): "https://abc123.ngrok.io" → Normalized and combined with tenant/data_product_name',
+                    ],
+                    required_parameters: [
+                      'api_base_url: Base API URL (e.g., "https://everest-010626.dataos.app")',
+                      'data_product_name: Data product name (e.g., "sample-vulcan-dp", "vulcan-app")',
+                      'tenant: Tenant name (optional, defaults to "system")',
                     ],
                   },
                   null,
@@ -1449,14 +1484,39 @@ ${prd}`;
         };
       }
 
-      // Use the provided environment base URL (normalization happens in getVulcanConfig)
-      console.log(`[MCP Handler] Received environment_base_url: ${environment_base_url}`);
-      const tenantConfig: TenantConfig = {
-        VULCAN_BASE_URL: environment_base_url,
-        VULCAN_TOKEN: undefined,
-        VULCAN_AUTH_HEADER: undefined,
-        VULCAN_AUTH_SCHEME: undefined,
-      };
+      // Check for required data_product_name
+      if (!mergedConfig.data_product_name) {
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    error: 'Data product name required',
+                    message: 'Please specify the data product name to query. URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}',
+                    action_required: 'Ask the user: "What is the data product name?" (e.g., "sample-vulcan-dp", "vulcan-app"). Also ask for tenant if not "system".',
+                    example: 'User should provide: data_product_name="sample-vulcan-dp", tenant="system" (or omit tenant to use default "system")',
+                    url_format: 'The tool constructs URLs as: {api_base_url}/{tenant}/vulcan/{data_product_name}/api/v1/...',
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      // Log the merged config
+      console.log(`[MCP Handler] Merged config:`, {
+        api_base_url: mergedConfig.api_base_url,
+        tenant: mergedConfig.tenant,
+        data_product_name: mergedConfig.data_product_name,
+      });
 
       try {
         const result = await getActivityTimeline(tenantConfig, {
