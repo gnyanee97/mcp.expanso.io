@@ -315,6 +315,22 @@ export default {
       url: request.url,
     });
 
+    // Log JSON-RPC method for MCP requests
+    let rpc: any = null;
+    try {
+      if (request.method === 'POST' && request.headers.get('Content-Type')?.includes('application/json')) {
+        rpc = await request.clone().json();
+        console.log("[mcp] rpc", {
+          method: rpc?.method,
+          id: rpc?.id,
+          hasParams: rpc?.params != null,
+          tool: rpc?.params?.name, // helpful when method is tools/call
+        });
+      }
+    } catch {
+      // ignore non-json bodies or parsing errors
+    }
+
     const url = new URL(request.url);
 
     // CORS headers for all responses

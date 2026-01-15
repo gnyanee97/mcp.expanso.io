@@ -1419,19 +1419,32 @@ ${prd}`;
       const offset = (args?.offset as number) || 0;
       const failed_only = (args?.failed_only as boolean) || false;
       const api_base_url = args?.api_base_url as string | undefined;
-      const tenant = (args?.tenant as string) || 'system'; // Default to 'system'
+      const tenantArg = (args?.tenant as string) || undefined; // Tenant from tool args (optional)
       const data_product_name = args?.data_product_name as string | undefined;
 
-      // Get tenant config (may have defaults)
-      const tenantConfig = await getTenantConfig(env, tenant);
+      // Use tenant from URL path (function parameter), fallback to tool arg, then 'default'
+      const tenantId = tenant || tenantArg || 'default';
+      
+      // Get tenant config (may have defaults from KV/env)
+      const tenantConfig = await getTenantConfig(env, tenantId);
 
       // Merge tool args with tenant config (tool args take precedence)
       const mergedConfig: TenantConfig = {
         ...tenantConfig,
         api_base_url: api_base_url ? normalizeApiBaseUrl(api_base_url) : tenantConfig.api_base_url,
-        tenant: tenant || tenantConfig.tenant || 'system',
+        tenant: tenantArg || tenantConfig.tenant || 'system', // Use tenant from tool args, not URL path
         data_product_name: data_product_name || tenantConfig.data_product_name,
       };
+
+      // Log the merged config for debugging
+      console.log("[MCP Handler] vulcan_activity_timeline", {
+        tenantId,
+        mergedConfig: {
+          api_base_url: mergedConfig.api_base_url,
+          tenant: mergedConfig.tenant,
+          data_product_name: mergedConfig.data_product_name,
+        },
+      });
 
       // Always require api_base_url for dynamic environment selection
       if (!mergedConfig.api_base_url) {
