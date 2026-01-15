@@ -138,18 +138,32 @@ export async function vulcanGet<T>(
   }
 
   // Log the URL being called for debugging
-  console.log(`[Vulcan API] GET ${url.toString()}`);
-  console.log(`[Vulcan API] Base URL: ${baseUrl}, Path: ${path}, Final URL: ${url.toString()}`);
+  const finalUrl = url.toString();
+  console.log(`[Vulcan API] GET ${finalUrl}`);
+  console.log(`[Vulcan API] Base URL: ${baseUrl}, Path: ${path}, Final URL: ${finalUrl}`);
 
-  const res = await fetch(url.toString(), { method: "GET", headers });
+  const res = await fetch(finalUrl, { method: "GET", headers });
 
+  // Log response status
+  console.log("[Vulcan API] Response", {
+    status: res.status,
+    statusText: res.statusText,
+    url: finalUrl,
+  });
+
+  // Read body safely (truncate for logging)
+  const text = await res.text();
+  console.log("[Vulcan API] Body snippet", text.slice(0, 300));
+
+  // Check if response is OK
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    const errorMessage = `Vulcan GET ${url.pathname} failed: ${res.status} ${res.statusText}\n${body}\nRequest URL: ${url.toString()}`;
+    const errorMessage = `Vulcan API error ${res.status} ${res.statusText}: ${text.slice(0, 300)}`;
     console.error(`[Vulcan API Error] ${errorMessage}`);
     throw new Error(errorMessage);
   }
 
-  return (await res.json()) as T;
+  // Parse as JSON
+  const data = JSON.parse(text) as T;
+  return data;
 }
 
