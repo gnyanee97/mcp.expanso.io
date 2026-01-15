@@ -7,7 +7,7 @@
 import type { Env } from '../index';
 
 export interface TenantConfig {
-  api_base_url?: string;        // e.g. https://everest-010626.dataos.app/system
+  api_base_url?: string;        // e.g. https://everest-010626.dataos.app (origin only, no path)
   tenant?: string;              // e.g. system
   data_product_name?: string;  // e.g. sample-vulcan-dp
   vulcan_token?: string;        // API authentication token (should be from Worker secret/env)
@@ -43,10 +43,10 @@ export async function getTenantConfig(
   }
 
   // 2) Build config from environment variables (with backward compatibility)
+  // Note: New env vars (VULCAN_API_BASE_URL, VULCAN_TENANT, VULCAN_DATA_PRODUCT_NAME) are not in Env type yet
+  // For now, only use legacy VULCAN_BASE_URL and rely on KV or tool args for new format
   const envConfig: TenantConfig = {
-    api_base_url: env.VULCAN_API_BASE_URL || env.VULCAN_BASE_URL, // New format or legacy
-    tenant: env.VULCAN_TENANT,
-    data_product_name: env.VULCAN_DATA_PRODUCT_NAME,
+    api_base_url: env.VULCAN_BASE_URL, // Legacy: can be set in env, but should use KV or tool args
     vulcan_token: env.VULCAN_TOKEN, // Should be from Worker secret
     // Legacy fields for backward compatibility
     VULCAN_BASE_URL: env.VULCAN_BASE_URL,
