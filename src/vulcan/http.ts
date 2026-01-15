@@ -75,6 +75,7 @@ export function getVulcanConfig(tenantConfig: TenantConfig | null): VulcanConfig
 
   // Normalize the base URL (handles user-provided base domains)
   const baseUrl = normalizeVulcanBaseUrl(tenantConfig.VULCAN_BASE_URL);
+  console.log(`[Vulcan Config] Input URL: ${tenantConfig.VULCAN_BASE_URL}, Normalized: ${baseUrl}`);
   const token = tenantConfig.VULCAN_TOKEN || ''; // Optional - default to empty if not provided
   const headerName = tenantConfig.VULCAN_AUTH_HEADER || "Authorization";
   const scheme = tenantConfig.VULCAN_AUTH_SCHEME || "Bearer";
