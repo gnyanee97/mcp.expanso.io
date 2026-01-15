@@ -18,6 +18,37 @@ export interface VulcanConfig {
 }
 
 /**
+ * Normalize user-provided URL to Vulcan API base URL.
+ * Users typically provide base domain (e.g., https://everest-010626.dataos.app)
+ * or home page (e.g., https://everest-010626.dataos.app/home/),
+ * but we need the API path: /system/vulcan/vulcan-app
+ */
+export function normalizeVulcanBaseUrl(userUrl: string): string {
+  try {
+    const url = new URL(userUrl);
+    
+    // If URL already contains the API path, use as-is
+    if (url.pathname.includes('/system/vulcan/vulcan-app')) {
+      // Extract up to and including /system/vulcan/vulcan-app
+      const apiPathIndex = url.pathname.indexOf('/system/vulcan/vulcan-app');
+      const basePath = url.pathname.substring(0, apiPathIndex + '/system/vulcan/vulcan-app'.length);
+      return `${url.protocol}//${url.host}${basePath}`;
+    }
+    
+    // Otherwise, extract base domain and append API path
+    // Remove any existing path (like /home/, /dashboard/, etc.)
+    return `${url.protocol}//${url.host}/system/vulcan/vulcan-app`;
+  } catch (e) {
+    // If URL parsing fails, try to append API path directly
+    const normalized = userUrl.endsWith('/') ? userUrl.slice(0, -1) : userUrl;
+    if (normalized.includes('/system/vulcan/vulcan-app')) {
+      return normalized;
+    }
+    return `${normalized}/system/vulcan/vulcan-app`;
+  }
+}
+
+/**
  * Create VulcanConfig from tenant configuration.
  * Accepts either TenantConfig (from KV) or legacy env vars.
  */
@@ -26,7 +57,8 @@ export function getVulcanConfig(tenantConfig: TenantConfig | null): VulcanConfig
     throw new Error("Missing VULCAN_BASE_URL in tenant configuration");
   }
 
-  const baseUrl = tenantConfig.VULCAN_BASE_URL;
+  // Normalize the base URL (handles user-provided base domains)
+  const baseUrl = normalizeVulcanBaseUrl(tenantConfig.VULCAN_BASE_URL);
   const token = tenantConfig.VULCAN_TOKEN || ''; // Optional - default to empty if not provided
   const headerName = tenantConfig.VULCAN_AUTH_HEADER || "Authorization";
   const scheme = tenantConfig.VULCAN_AUTH_SCHEME || "Bearer";

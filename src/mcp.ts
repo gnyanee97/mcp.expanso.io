@@ -410,10 +410,10 @@ URL ACCESSIBILITY REQUIREMENTS:
 - localhost/127.0.0.1 URLs will NOT work from Cloudflare Workers.
 
 Examples:
-- "What failed today in prod?" → Ask: "What is the API base URL for your prod environment?" → User: "https://everest-010626.dataos.app/system/vulcan/vulcan-app" → Set environment_base_url="https://everest-010626.dataos.app/system/vulcan/vulcan-app", failed_only=true, environment="prod", after_start_ts=today_start_ms
+- "What failed today in prod?" → Ask: "What is the API base URL for your prod environment?" → User: "https://everest-010626.dataos.app" or "https://everest-010626.dataos.app/home/" → Tool auto-appends API path → Set environment_base_url="https://everest-010626.dataos.app", failed_only=true, environment="prod", after_start_ts=today_start_ms
 - "Did model users run?" → Ask for environment URL first, then set model_name=["users"]
-- "Show recent activity" → Ask: "Which environment? Please provide the environment name and API base URL."
-- "What happened in local?" → Ask: "What is the API base URL for your local environment? (Note: must be publicly accessible, e.g., via ngrok)" → User: "https://abc123.ngrok.io" → Set environment_base_url="https://abc123.ngrok.io"
+- "Show recent activity" → Ask: "Which environment? Please provide the environment name and API base URL (base domain is fine, e.g., https://everest-010626.dataos.app)."
+- "What happened in local?" → Ask: "What is the API base URL for your local environment? (Note: must be publicly accessible, e.g., via ngrok)" → User: "https://abc123.ngrok.io" → Tool auto-appends API path → Set environment_base_url="https://abc123.ngrok.io"
 - "What happened in the last hour?" → Ask for environment URL, then set after_start_ts=(now - 3600000)ms
 - "Latest runs" → Ask for environment URL, then set action="run", limit=10
 - "Show me the last plan" → Ask for environment URL, then set action="plan", limit=1
@@ -460,7 +460,7 @@ Returns both raw events and a summary view with breakdown by plans/runs, success
         },
         environment_base_url: {
           type: 'string',
-          description: 'REQUIRED: Base URL for the specific environment to query. Must be publicly accessible from the internet (Cloudflare Workers cannot access localhost/127.0.0.1). Examples: "https://everest-010626.dataos.app/system/vulcan/vulcan-app" for prod, "https://abc123.ngrok.io" for local (via ngrok). For local environments, the user must expose their API using ngrok, Cloudflare Tunnel, or public IP. Always ask the user for this URL before calling the tool.',
+          description: 'REQUIRED: Base URL for the specific environment to query. Users can provide the base domain (e.g., "https://everest-010626.dataos.app" or "https://everest-010626.dataos.app/home/") - the tool will automatically append the API path (/system/vulcan/vulcan-app). Must be publicly accessible from the internet (Cloudflare Workers cannot access localhost/127.0.0.1). For local environments, users must expose their API using ngrok, Cloudflare Tunnel, or public IP. Always ask the user for this URL before calling the tool.',
         },
       },
     },
@@ -1420,10 +1420,13 @@ ${prd}`;
                       'If user asks "What happened today?" → Ask: "Which environment would you like to query? Please provide the environment name and its API base URL."',
                     ],
                     url_requirements: 'The URL must be publicly accessible from the internet. For local environments, use services like ngrok, Cloudflare Tunnel, or expose via public IP. localhost/127.0.0.1 will NOT work from Cloudflare Workers.',
+                    url_format: 'Users can provide the base domain URL (e.g., "https://everest-010626.dataos.app" or "https://everest-010626.dataos.app/home/"). The tool will automatically append the API path (/system/vulcan/vulcan-app).',
                     example_urls: [
-                      'Production: "https://everest-010626.dataos.app/system/vulcan/vulcan-app"',
-                      'Local (via ngrok): "https://abc123.ngrok.io"',
-                      'Public IP: "https://your-public-ip:8000" (if exposed)',
+                      'Base domain: "https://everest-010626.dataos.app" (will auto-append API path)',
+                      'Home page: "https://everest-010626.dataos.app/home/" (will auto-append API path)',
+                      'Full API path: "https://everest-010626.dataos.app/system/vulcan/vulcan-app" (used as-is)',
+                      'Local (via ngrok): "https://abc123.ngrok.io" (will auto-append API path)',
+                      'Public IP: "https://your-public-ip:8000" (will auto-append API path if exposed)',
                     ],
                   },
                   null,
