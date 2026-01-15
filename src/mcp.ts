@@ -1450,6 +1450,7 @@ ${prd}`;
       }
 
       // Use the provided environment base URL (normalization happens in getVulcanConfig)
+      console.log(`[MCP Handler] Received environment_base_url: ${environment_base_url}`);
       const tenantConfig: TenantConfig = {
         VULCAN_BASE_URL: environment_base_url,
         VULCAN_TOKEN: undefined,

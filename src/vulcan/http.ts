@@ -139,6 +139,7 @@ export async function vulcanGet<T>(
 
   // Log the URL being called for debugging
   console.log(`[Vulcan API] GET ${url.toString()}`);
+  console.log(`[Vulcan API] Base URL: ${baseUrl}, Path: ${path}, Final URL: ${url.toString()}`);
 
   const res = await fetch(url.toString(), { method: "GET", headers });
 
