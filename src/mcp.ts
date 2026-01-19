@@ -12,6 +12,8 @@ import type { components } from './types/validate-api';
 import { getActivityTimeline } from './vulcan/activity';
 import { getTenantConfig, type TenantConfig } from './vulcan/config';
 import { normalizeApiBaseUrl, parseVulcanOpenApiUrl } from './vulcan/normalize';
+import { getMetaExpanded } from './vulcan/meta';
+import { getModelLineageFromMeta } from './vulcan/lineage';
 
 // Typed external validation using validate.expanso.io API contract
 type ValidateResponse = components['schemas']['ValidateResponse'];
@@ -492,6 +494,97 @@ Returns both raw events and a summary view with breakdown by plans/runs, success
           description: 'REQUIRED if openapi_url is not provided: Data product name for URL construction (e.g., "sample-vulcan-dp", "vulcan-app"). URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}',
         },
       },
+    },
+  },
+  {
+    name: 'vulcan_model_lineage',
+    description: `Query Vulcan Meta API to get model dependency lineage (upstream/downstream chains). Returns LIVE structural metadata from Vulcan APIs.
+
+CRITICAL: Use this tool when the user asks about:
+- Root-cause analysis ("Why did this fail?", "What caused this?")
+- Dependency chains ("What are the upstream dependencies of model X?", "What depends on model Y?")
+- Lineage queries ("What is the upstream dependency chain?", "Show me what models depend on this")
+- Understanding relationships between models
+
+ENVIRONMENT CONFIGURATION (REQUIRED):
+- OPTIONAL: Users can provide openapi_url instead of api_base_url, tenant, and data_product_name separately.
+  Example: "https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json"
+  This automatically extracts all three required fields (api_base_url, tenant, data_product_name).
+- If openapi_url is not provided, then api_base_url, tenant, and data_product_name are REQUIRED.
+- URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}
+- When user asks about any environment (prod, local, staging, etc.), you MUST ask them for:
+  Option A (easier): Ask for openapi_url (e.g., "https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json")
+  Option B: Ask for:
+    1. API base URL (e.g., "https://everest-010626.dataos.app")
+    2. Data product name (e.g., "sample-vulcan-dp", "vulcan-app")
+    3. Tenant name (e.g., "system")
+- CRITICAL WORKFLOW - Follow these steps exactly:
+  1. Ask the user: "What is the API base URL for the [environment] environment?" where [environment] is detected from their query.
+  2. Wait for user to provide a URL in their response (e.g., "everest-010626.dataos.app" or "https://everest-010626.dataos.app/home").
+  3. Ask the user: "What is the data product name?" (e.g., "sample-vulcan-dp")
+  4. Ask the user: "What is the tenant name?" (e.g., "system")
+  5. Extract the URL from their response (handle variations: add https:// if missing, remove trailing slashes, handle paths like /home/).
+  6. Call the tool again with api_base_url, data_product_name, and tenant parameters, along with ALL other parameters from the original request (model_name, direction, etc.).
+- If no environment is specified, ask: "Which environment would you like to query? Please provide: 1) Environment name, 2) API base URL, 3) Data product name, 4) Tenant name."
+
+URL ACCESSIBILITY REQUIREMENTS:
+- The URL MUST be publicly accessible from the internet (Cloudflare Workers cannot access localhost/127.0.0.1).
+- For local environments, users need to expose their API using:
+  - ngrok: "https://abc123.ngrok.io"
+  - Cloudflare Tunnel
+  - Public IP with port forwarding
+- localhost/127.0.0.1 URLs will NOT work from Cloudflare Workers.
+
+Examples:
+- "What are the upstream dependencies of model users?" → Ask for OpenAPI URL OR (environment URL, data_product_name, tenant), then set model_name="users", direction="upstream"
+- "What depends on model orders?" → Ask for OpenAPI URL OR (environment URL, data_product_name, tenant), then set model_name="orders", direction="downstream"
+- "What is the upstream dependency chain for model sales?" → Ask for OpenAPI URL OR (environment URL, data_product_name, tenant), then set model_name="sales", direction="upstream"
+- "Show me the lineage for model customers" → Ask for OpenAPI URL OR (environment URL, data_product_name, tenant), then set model_name="customers", direction="both"
+
+Returns upstream and downstream dependency chains with depth information, plus a summary with counts.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        model_name: {
+          type: 'string',
+          description: 'REQUIRED: Model name to query lineage for (e.g., "users", "b2b_saas.users", "orders"). Can be just the model name or fully qualified.',
+        },
+        direction: {
+          type: 'string',
+          enum: ['upstream', 'downstream', 'both'],
+          default: 'both',
+          description: 'Direction to traverse: "upstream" (what this model depends on), "downstream" (what depends on this model), or "both" (default).',
+        },
+        max_depth: {
+          type: 'number',
+          default: 10,
+          minimum: 1,
+          maximum: 50,
+          description: 'Maximum traversal depth (default: 10). Limits how many levels deep to traverse the dependency graph.',
+        },
+        max_paths: {
+          type: 'number',
+          minimum: 1,
+          description: 'Optional: Maximum total number of paths to return. If specified, limits the combined count of upstream and downstream nodes. Useful for large graphs.',
+        },
+        openapi_url: {
+          type: 'string',
+          description: 'OPTIONAL: Full OpenAPI URL (e.g., "https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json"). If provided, automatically extracts api_base_url, tenant, and data_product_name. Use this instead of providing the three fields separately for convenience. If not provided, then api_base_url, tenant, and data_product_name are required.',
+        },
+        api_base_url: {
+          type: 'string',
+          description: 'REQUIRED if openapi_url is not provided: API base URL for the specific environment to query. Users can provide the base domain (e.g., "https://everest-010626.dataos.app") - the tool will normalize it and construct the full API path using tenant and data_product_name. Must be publicly accessible from the internet (Cloudflare Workers cannot access localhost/127.0.0.1). For local environments, users must expose their API using ngrok, Cloudflare Tunnel, or public IP.',
+        },
+        tenant: {
+          type: 'string',
+          description: 'REQUIRED if openapi_url is not provided: Tenant name for URL construction (e.g., "system"). URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}',
+        },
+        data_product_name: {
+          type: 'string',
+          description: 'REQUIRED if openapi_url is not provided: Data product name for URL construction (e.g., "sample-vulcan-dp", "vulcan-app"). URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}',
+        },
+      },
+      required: ['model_name'],
     },
   },
 ];
@@ -1610,7 +1703,7 @@ ${prd}`;
       });
 
       try {
-        const result = await getActivityTimeline(tenantConfig, {
+        const result = await getActivityTimeline(mergedConfig, {
           action,
           environment,
           after_start_ts,
@@ -1637,6 +1730,216 @@ ${prd}`;
           id,
           -32603,
           `Failed to fetch activity timeline: ${error instanceof Error ? error.message : 'Unknown error'}`
+        );
+      }
+    }
+
+    case 'vulcan_model_lineage': {
+      const model_name = args?.model_name as string | undefined;
+      const direction = (args?.direction as 'upstream' | 'downstream' | 'both') || 'both';
+      const max_depth = (args?.max_depth as number) || 10;
+      const max_paths = args?.max_paths as number | undefined;
+      const openapi_url = args?.openapi_url as string | undefined;
+      const api_base_url = args?.api_base_url as string | undefined;
+      const tenantArg = (args?.tenant as string) || undefined;
+      const data_product_name = args?.data_product_name as string | undefined;
+
+      // Validate required model_name
+      if (!model_name) {
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    error: 'Model name required',
+                    message: 'Please specify the model name to query lineage for.',
+                    action_required: 'Ask the user: "Which model would you like to query lineage for?" (e.g., "users", "orders", "customers").',
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      // If openapi_url is provided, parse it to extract the three fields
+      let parsedFromOpenApi: { api_base_url?: string; tenant?: string; data_product_name?: string } = {};
+      if (openapi_url) {
+        const parsed = parseVulcanOpenApiUrl(openapi_url);
+        if (parsed) {
+          parsedFromOpenApi = {
+            api_base_url: parsed.apiBaseUrl,
+            tenant: parsed.tenant,
+            data_product_name: parsed.dataProductName,
+          };
+          console.log("[MCP Handler] Parsed from openapi_url:", parsedFromOpenApi);
+        } else {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      error: 'Invalid OpenAPI URL format',
+                      message: `Could not parse OpenAPI URL: ${openapi_url}`,
+                      expected_format: 'https://{domain}/{tenant}/vulcan/{data_product_name}/openapi.json',
+                      example: 'https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json',
+                    },
+                    null,
+                    2
+                  ),
+                },
+              ],
+              isError: true,
+            },
+          };
+        }
+      }
+
+      // Use tenant from URL path (function parameter), fallback to tool arg, then parsed, then 'default'
+      const tenantId = tenant || tenantArg || parsedFromOpenApi.tenant || 'default';
+      
+      // Get tenant config (may have defaults from KV/env)
+      const tenantConfig = await getTenantConfig(env, tenantId);
+
+      // Merge: openapi_url parsed values → tool args → tenant config (tool args take precedence)
+      const mergedConfig: TenantConfig = {
+        ...tenantConfig,
+        api_base_url: api_base_url || parsedFromOpenApi.api_base_url || tenantConfig.api_base_url,
+        tenant: tenantArg || parsedFromOpenApi.tenant || tenantConfig.tenant,
+        data_product_name: data_product_name || parsedFromOpenApi.data_product_name || tenantConfig.data_product_name,
+      };
+
+      // Log the merged config for debugging
+      console.log("[MCP Handler] vulcan_model_lineage", {
+        tenantId,
+        model_name,
+        direction,
+        mergedConfig: {
+          api_base_url: mergedConfig.api_base_url,
+          tenant: mergedConfig.tenant,
+          data_product_name: mergedConfig.data_product_name,
+        },
+      });
+
+      // Always require api_base_url for dynamic environment selection
+      if (!mergedConfig.api_base_url) {
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    error: 'Vulcan API configuration required',
+                    message: 'Please specify either openapi_url OR provide api_base_url, data_product_name, and tenant separately.',
+                    action_required: 'CRITICAL: Ask the user for required information, then when they respond, you MUST extract the values and pass them as parameters in your next tool call.',
+                    step_by_step: [
+                      'Option A (easier): Ask the user: "What is the OpenAPI URL for the [environment] environment?" (e.g., "https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json"). Then call the tool with openapi_url parameter.',
+                      'Option B: Ask the user: "What is the API base URL for the [environment] environment?" where [environment] is detected from their query (e.g., "prod", "local", "staging").',
+                      'Step 2: Wait for user response with a URL (e.g., "https://everest-010626.dataos.app" or "everest-010626.dataos.app/home").',
+                      'Step 3: Ask the user: "What is the data product name?" (e.g., "sample-vulcan-dp", "vulcan-app").',
+                      'Step 4: Ask the user: "What is the tenant name?" (e.g., "system").',
+                      'Step 5: Extract the URL from their response (add https:// if missing, handle variations like missing protocol, trailing slashes, etc.).',
+                      'Step 6: Call the tool again with either openapi_url OR (api_base_url, data_product_name, tenant) parameters, along with ALL other parameters from the original request (model_name, direction, etc.).',
+                    ],
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      // Check for required data_product_name
+      if (!mergedConfig.data_product_name) {
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    error: 'Data product name required',
+                    message: 'Please specify the data product name to query. URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}',
+                    action_required: 'Ask the user: "What is the data product name?" (e.g., "sample-vulcan-dp", "vulcan-app").',
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      // Check for required tenant
+      if (!mergedConfig.tenant) {
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    error: 'Tenant name required',
+                    message: 'Please specify the tenant name to query. URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}',
+                    action_required: 'Ask the user: "What is the tenant name?" (e.g., "system").',
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      try {
+        // Fetch meta with relationships expanded
+        const meta = await getMetaExpanded(mergedConfig);
+
+        // Get lineage from meta
+        const lineage = getModelLineageFromMeta(meta, model_name, direction, max_depth, max_paths);
+
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(lineage, null, 2),
+              },
+            ],
+          },
+        };
+      } catch (error) {
+        return errorResponse(
+          id,
+          -32603,
+          `Failed to fetch model lineage: ${error instanceof Error ? error.message : 'Unknown error'}`
         );
       }
     }
