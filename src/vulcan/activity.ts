@@ -139,3 +139,60 @@ export async function getActivityTimeline(
   };
 }
 
+// Types for RunDetail API
+export interface ErrorExec {
+  model_fqn?: string | null;
+  model_name?: string | null;
+  error_class: string;
+  message: string;
+  is_audit_error?: boolean;
+  audit_name?: string | null;
+  audit_failed_rows?: number | null;
+  audit_sql?: string | null;
+  audit_args?: Record<string, unknown> | null;
+  audit_adapter_dialect?: string | null;
+}
+
+export interface ModelExec {
+  name: string;
+  fqn: string;
+  model_kind?: string | null;
+  start_ts: number;
+  end_ts?: number;
+  total_batches?: number;
+  evaluation_ms?: number;
+  rows_affected?: number;
+  bytes_processed?: number;
+  intervals?: unknown[];
+}
+
+export interface RunDetail {
+  run_id: string;
+  plan_id: string;
+  environment: string;
+  start_ts: number;
+  end_ts: number;
+  models_affected: ModelExec[];
+  errors: ErrorExec[];
+  success: boolean;
+  quality?: Record<string, unknown[]> | null;
+  profile?: Record<string, unknown> | null;
+  _links: Record<string, unknown>;
+}
+
+/**
+ * Fetch run details from Vulcan Activity API.
+ * Returns complete run information including errors, quality, and profile data.
+ */
+export async function getRunDetail(
+  tenantConfig: TenantConfig | null,
+  runId: string
+): Promise<RunDetail> {
+  const data = await vulcanGet<RunDetail>(
+    tenantConfig,
+    `/api/v1/activity/timeline/runs/${runId}`,
+    {}
+  );
+  return data;
+}
+
