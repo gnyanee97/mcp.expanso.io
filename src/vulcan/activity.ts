@@ -196,3 +196,80 @@ export async function getRunDetail(
   return data;
 }
 
+// Types for PlanDetail API (minimal - only what recommendations need)
+export interface ChangeDisplay {
+  name: string;
+  fqn: string;
+  snapshot_id: string;
+  version: string;
+  node_type: string;
+  model_kind?: string | null;
+  parents?: string[];
+}
+
+export interface ChangeDirect extends ChangeDisplay {
+  diff: string;
+  indirect?: ChangeDisplay[];
+  direct?: ChangeDisplay[];
+  change_category?: string | null;
+  data_hash_changed?: boolean;
+  metadata_hash_changed?: boolean;
+  parent_data_hash_changed?: boolean;
+  old_version?: string;
+  old_snapshot_id?: string;
+  schema_diff?: unknown | null;
+  needs_backfill?: boolean;
+}
+
+export interface ChangeIndirect extends ChangeDisplay {
+  change_category?: string | null;
+  needs_backfill?: boolean;
+}
+
+export interface ModelsDiff {
+  direct: ChangeDirect[];
+  indirect: ChangeIndirect[];
+  added: ChangeDisplay[];
+  removed: ChangeDisplay[];
+  metadata?: ChangeDisplay[];
+}
+
+export interface BackfillInfo {
+  name: string;
+  fqn: string;
+  node_type: string;
+  snapshot_id: string;
+  version: string;
+  model_kind?: string | null;
+  intervals: [number, number][];
+  is_directly_modified?: boolean;
+}
+
+export interface PlanDetail {
+  plan_id: string;
+  environment: string;
+  start_ts: number;
+  end_ts: number;
+  success: boolean;
+  errors: ErrorExec[];
+  changes: ModelsDiff;
+  backfills: BackfillInfo[];
+  _links: Record<string, unknown>;
+}
+
+/**
+ * Fetch plan details from Vulcan Activity API.
+ * Returns complete plan information including changes, backfills, and errors.
+ */
+export async function getPlanDetail(
+  tenantConfig: TenantConfig | null,
+  planId: string
+): Promise<PlanDetail> {
+  const data = await vulcanGet<PlanDetail>(
+    tenantConfig,
+    `/api/v1/activity/timeline/plans/${planId}`,
+    {}
+  );
+  return data;
+}
+

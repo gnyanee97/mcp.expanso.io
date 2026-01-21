@@ -9,12 +9,14 @@ import type { Env } from './index';
 import { handleSearch, handleSearchPrds, handleListResources, handleReadResource } from './handlers';
 import { validatePipelineYaml } from './pipeline-validator';
 import type { components } from './types/validate-api';
-import { getActivityTimeline, getRunDetail } from './vulcan/activity';
+import { getActivityTimeline, getRunDetail, getPlanDetail } from './vulcan/activity';
 import { getTenantConfig, type TenantConfig } from './vulcan/config';
 import { normalizeApiBaseUrl, parseVulcanOpenApiUrl } from './vulcan/normalize';
 import { getMetaExpanded } from './vulcan/meta';
 import { getModelLineageFromMeta } from './vulcan/lineage';
 import { analyzeRunRootCause } from './vulcan/rootCause';
+import { getQualitySnapshot } from './vulcan/quality';
+import { recommendActions } from './vulcan/recommendActions';
 
 // Typed external validation using validate.expanso.io API contract
 type ValidateResponse = components['schemas']['ValidateResponse'];
@@ -658,6 +660,124 @@ Returns failed models with their errors and upstream dependency chains, helping 
           minimum: 1,
           maximum: 20,
           description: 'Maximum number of failed models to analyze (default: 5). If a run has many failed models, only the top N are analyzed.',
+        },
+        openapi_url: {
+          type: 'string',
+          description: 'OPTIONAL: Full OpenAPI URL (e.g., "https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json"). If provided, automatically extracts api_base_url, tenant, and data_product_name. Use this instead of providing the three fields separately for convenience. If not provided, then api_base_url, tenant, and data_product_name are required.',
+        },
+        api_base_url: {
+          type: 'string',
+          description: 'REQUIRED if openapi_url is not provided: API base URL for the specific environment to query. Users can provide the base domain (e.g., "https://everest-010626.dataos.app") - the tool will normalize it and construct the full API path using tenant and data_product_name. Must be publicly accessible from the internet (Cloudflare Workers cannot access localhost/127.0.0.1). For local environments, users must expose their API using ngrok, Cloudflare Tunnel, or public IP.',
+        },
+        tenant: {
+          type: 'string',
+          description: 'REQUIRED if openapi_url is not provided: Tenant name for URL construction (e.g., "system"). URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}',
+        },
+        data_product_name: {
+          type: 'string',
+          description: 'REQUIRED if openapi_url is not provided: Data product name for URL construction (e.g., "sample-vulcan-dp", "vulcan-app"). URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}',
+        },
+      },
+      required: ['run_id'],
+    },
+  },
+  {
+    name: 'vulcan_recommend_actions',
+    description: `Recommend actions for a failed run by analyzing root cause, quality, and plan context. Returns actionable recommendations with evidence.
+
+CRITICAL: Use this tool when the user asks about:
+- Action recommendations ("What should I do?", "How do I fix this?", "What are the next steps?")
+- Decision support ("Should I rerun or fix?", "Do I need to backfill?")
+- Remediation guidance ("How to fix this failure?", "What actions should I take?")
+
+This tool combines:
+- Run errors and execution details
+- Upstream dependency analysis
+- Quality snapshot (if enabled)
+- Plan change context (if available)
+
+ENVIRONMENT CONFIGURATION (REQUIRED):
+- OPTIONAL: Users can provide openapi_url instead of api_base_url, tenant, and data_product_name separately.
+  Example: "https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json"
+  This automatically extracts all three required fields (api_base_url, tenant, data_product_name).
+- If openapi_url is not provided, then api_base_url, tenant, and data_product_name are REQUIRED.
+- URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}
+- When user asks about any environment (prod, local, staging, etc.), you MUST ask them for:
+  Option A (easier): Ask for openapi_url (e.g., "https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json")
+  Option B: Ask for:
+    1. API base URL (e.g., "https://everest-010626.dataos.app")
+    2. Data product name (e.g., "sample-vulcan-dp", "vulcan-app")
+    3. Tenant name (e.g., "system")
+- CRITICAL WORKFLOW - Follow these steps exactly:
+  1. Ask the user: "What is the API base URL for the [environment] environment?" where [environment] is detected from their query.
+  2. Wait for user to provide a URL in their response (e.g., "everest-010626.dataos.app" or "https://everest-010626.dataos.app/home").
+  3. Ask the user: "What is the data product name?" (e.g., "sample-vulcan-dp")
+  4. Ask the user: "What is the tenant name?" (e.g., "system")
+  5. Extract the URL from their response (handle variations: add https:// if missing, remove trailing slashes, handle paths like /home/).
+  6. Call the tool again with api_base_url, data_product_name, and tenant parameters, along with ALL other parameters from the original request (run_id, include_quality_snapshot, etc.).
+- If no environment is specified, ask: "Which environment would you like to query? Please provide: 1) Environment name, 2) API base URL, 3) Data product name, 4) Tenant name."
+
+URL ACCESSIBILITY REQUIREMENTS:
+- The URL MUST be publicly accessible from the internet (Cloudflare Workers cannot access localhost/127.0.0.1).
+- For local environments, users need to expose their API using:
+  - ngrok: "https://abc123.ngrok.io"
+  - Cloudflare Tunnel
+  - Public IP with port forwarding
+- localhost/127.0.0.1 URLs will NOT work from Cloudflare Workers.
+
+Examples:
+- "What should I do about run abc123?" → Ask for OpenAPI URL OR (environment URL, data_product_name, tenant), then set run_id="abc123"
+- "How do I fix the latest failure?" → First use vulcan_activity_timeline to get the latest run_id, then use this tool with that run_id
+- "Should I rerun or fix run xyz?" → Ask for OpenAPI URL OR (environment URL, data_product_name, tenant), then set run_id="xyz"
+
+Returns categorized failure analysis with recommended actions, decision (rerun/fix/backfill/fix_upstream_first/investigate), and evidence.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        run_id: {
+          type: 'string',
+          description: 'REQUIRED: Run ID to get recommendations for (e.g., "188d70a19b3b460ca4648429ae8043ec"). Get this from vulcan_activity_timeline or user input.',
+        },
+        include_quality_snapshot: {
+          type: 'boolean',
+          default: true,
+          description: 'Whether to fetch quality snapshot for recommendations (default: true). Quality data helps distinguish data quality issues from execution failures.',
+        },
+        quality_run_id: {
+          type: 'string',
+          description: 'Optional: Run ID for quality snapshot, or "latest" for most recent snapshot (default: uses run_id). Only used if include_quality_snapshot=true.',
+        },
+        include_plan_context: {
+          type: 'boolean',
+          default: true,
+          description: 'Whether to fetch plan context for recommendations (default: true). Plan context helps identify if recent changes caused the failure.',
+        },
+        max_depth: {
+          type: 'number',
+          default: 5,
+          minimum: 1,
+          maximum: 20,
+          description: 'Maximum traversal depth for upstream lineage (default: 5). Shorter depth focuses on direct dependencies for root cause analysis.',
+        },
+        max_paths: {
+          type: 'number',
+          default: 20,
+          minimum: 1,
+          description: 'Maximum total number of upstream paths per failed model (default: 20). Caps output size for large dependency graphs.',
+        },
+        max_failed_models: {
+          type: 'number',
+          default: 5,
+          minimum: 1,
+          maximum: 20,
+          description: 'Maximum number of failed models to analyze (default: 5). If a run has many failed models, only the top N are analyzed.',
+        },
+        max_actions: {
+          type: 'number',
+          default: 5,
+          minimum: 1,
+          maximum: 10,
+          description: 'Maximum number of recommended actions to return (default: 5).',
         },
         openapi_url: {
           type: 'string',
@@ -2272,6 +2392,307 @@ ${prd}`;
           id,
           -32603,
           `Failed to analyze run root cause: ${error instanceof Error ? error.message : 'Unknown error'}`
+        );
+      }
+    }
+
+    case 'vulcan_recommend_actions': {
+      const run_id = args?.run_id as string | undefined;
+      const include_quality_snapshot = (args?.include_quality_snapshot as boolean) !== false; // Default true
+      const quality_run_id = args?.quality_run_id as string | undefined;
+      const include_plan_context = (args?.include_plan_context as boolean) !== false; // Default true
+      const max_depth = (args?.max_depth as number) || 5;
+      const max_paths = (args?.max_paths as number) || 20;
+      const max_failed_models = (args?.max_failed_models as number) || 5;
+      const max_actions = (args?.max_actions as number) || 5;
+      const openapi_url = args?.openapi_url as string | undefined;
+      const api_base_url = args?.api_base_url as string | undefined;
+      const tenantArg = (args?.tenant as string) || undefined;
+      const data_product_name = args?.data_product_name as string | undefined;
+
+      // Validate required run_id
+      if (!run_id) {
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    error: 'Run ID required',
+                    message: 'Please specify the run ID to get recommendations for.',
+                    action_required: 'Ask the user: "Which run ID would you like recommendations for?" (e.g., "188d70a19b3b460ca4648429ae8043ec"). You can also use vulcan_activity_timeline to find recent run IDs.',
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      // If openapi_url is provided, parse it to extract the three fields
+      let parsedFromOpenApi: { api_base_url?: string; tenant?: string; data_product_name?: string } = {};
+      if (openapi_url) {
+        const parsed = parseVulcanOpenApiUrl(openapi_url);
+        if (parsed) {
+          parsedFromOpenApi = {
+            api_base_url: parsed.apiBaseUrl,
+            tenant: parsed.tenant,
+            data_product_name: parsed.dataProductName,
+          };
+          console.log("[MCP Handler] Parsed from openapi_url:", parsedFromOpenApi);
+        } else {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      error: 'Invalid OpenAPI URL format',
+                      message: `Could not parse OpenAPI URL: ${openapi_url}`,
+                      expected_format: 'https://{domain}/{tenant}/vulcan/{data_product_name}/openapi.json',
+                      example: 'https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json',
+                    },
+                    null,
+                    2
+                  ),
+                },
+              ],
+              isError: true,
+            },
+          };
+        }
+      }
+
+      // Use tenant from URL path (function parameter), fallback to tool arg, then parsed, then 'default'
+      const tenantId = tenant || tenantArg || parsedFromOpenApi.tenant || 'default';
+      
+      // Get tenant config (may have defaults from KV/env)
+      const tenantConfig = await getTenantConfig(env, tenantId);
+
+      // Merge: openapi_url parsed values → tool args → tenant config (tool args take precedence)
+      const mergedConfig: TenantConfig = {
+        ...tenantConfig,
+        api_base_url: api_base_url || parsedFromOpenApi.api_base_url || tenantConfig.api_base_url,
+        tenant: tenantArg || parsedFromOpenApi.tenant || tenantConfig.tenant,
+        data_product_name: data_product_name || parsedFromOpenApi.data_product_name || tenantConfig.data_product_name,
+      };
+
+      // Log the merged config for debugging
+      console.log("[MCP Handler] vulcan_recommend_actions", {
+        tenantId,
+        run_id,
+        include_quality_snapshot,
+        quality_run_id,
+        include_plan_context,
+        max_depth,
+        max_paths,
+        max_failed_models,
+        max_actions,
+        mergedConfig: {
+          api_base_url: mergedConfig.api_base_url,
+          tenant: mergedConfig.tenant,
+          data_product_name: mergedConfig.data_product_name,
+        },
+      });
+
+      // Always require api_base_url for dynamic environment selection
+      if (!mergedConfig.api_base_url) {
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    error: 'Vulcan API configuration required',
+                    message: 'Please specify either openapi_url OR provide api_base_url, data_product_name, and tenant separately.',
+                    action_required: 'CRITICAL: Ask the user for required information, then when they respond, you MUST extract the values and pass them as parameters in your next tool call.',
+                    step_by_step: [
+                      'Option A (easier): Ask the user: "What is the OpenAPI URL for the [environment] environment?" (e.g., "https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json"). Then call the tool with openapi_url parameter.',
+                      'Option B: Ask the user: "What is the API base URL for the [environment] environment?" where [environment] is detected from their query (e.g., "prod", "local", "staging").',
+                      'Step 2: Wait for user response with a URL (e.g., "https://everest-010626.dataos.app" or "everest-010626.dataos.app/home").',
+                      'Step 3: Ask the user: "What is the data product name?" (e.g., "sample-vulcan-dp", "vulcan-app").',
+                      'Step 4: Ask the user: "What is the tenant name?" (e.g., "system").',
+                      'Step 5: Extract the URL from their response (add https:// if missing, handle variations like missing protocol, trailing slashes, etc.).',
+                      'Step 6: Call the tool again with either openapi_url OR (api_base_url, data_product_name, tenant) parameters, along with ALL other parameters from the original request (run_id, include_quality_snapshot, etc.).',
+                    ],
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      // Check for required data_product_name
+      if (!mergedConfig.data_product_name) {
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    error: 'Data product name required',
+                    message: 'Please specify the data product name to query. URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}',
+                    action_required: 'Ask the user: "What is the data product name?" (e.g., "sample-vulcan-dp", "vulcan-app").',
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      // Check for required tenant
+      if (!mergedConfig.tenant) {
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    error: 'Tenant name required',
+                    message: 'Please specify the tenant name to query. URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}',
+                    action_required: 'Ask the user: "What is the tenant name?" (e.g., "system").',
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      try {
+        // 1. Fetch run detail
+        const runDetail = await getRunDetail(mergedConfig, run_id);
+
+        // Check if there are any errors (don't rely on success flag alone)
+        if (!runDetail.errors || runDetail.errors.length === 0) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      message: 'No failure evidence found',
+                      run_id: runDetail.run_id,
+                      success: runDetail.success,
+                      note: 'This run completed without errors. Recommendations are only applicable for failed runs.',
+                    },
+                    null,
+                    2
+                  ),
+                },
+              ],
+            },
+          };
+        }
+
+        // 2. Fetch meta ONCE (will be reused for root cause analysis)
+        const meta = await getMetaExpanded(mergedConfig);
+
+        // 3. Compute root cause (reuses meta for all failed models)
+        const rootCause = analyzeRunRootCause(runDetail, meta, max_depth, max_paths, max_failed_models);
+
+        // 4. Fetch plan detail (if enabled)
+        let planDetail = undefined;
+        if (include_plan_context && runDetail.plan_id) {
+          try {
+            planDetail = await getPlanDetail(mergedConfig, runDetail.plan_id);
+          } catch (error) {
+            console.warn(`Failed to fetch plan detail for ${runDetail.plan_id}:`, error);
+            // Continue without plan context
+          }
+        }
+
+        // 5. Fetch quality snapshot (if enabled)
+        let qualitySnapshot = undefined;
+        if (include_quality_snapshot) {
+          try {
+            const qualityRunId = quality_run_id || run_id;
+            qualitySnapshot = await getQualitySnapshot(mergedConfig, qualityRunId);
+          } catch (error) {
+            console.warn(`Failed to fetch quality snapshot for ${quality_run_id || run_id}:`, error);
+            // Continue without quality snapshot
+          }
+        }
+
+        // 6. Get recommendations
+        const recommendations = recommendActions({
+          runDetail,
+          rootCause,
+          qualitySnapshot,
+          planDetail,
+          max_actions: max_actions,
+        });
+
+        // Format response with summary and data
+        const summary = {
+          category: recommendations.category,
+          confidence: recommendations.confidence,
+          decision: recommendations.decision,
+          action_count: recommendations.actions.length,
+          evidence_summary: {
+            error_count: runDetail.errors.length,
+            failed_models: rootCause.failed_models.length,
+            has_quality_data: qualitySnapshot !== undefined,
+            has_plan_context: planDetail !== undefined,
+          },
+        };
+
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    summary,
+                    data: recommendations,
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          },
+        };
+      } catch (error) {
+        return errorResponse(
+          id,
+          -32603,
+          `Failed to get recommendations: ${error instanceof Error ? error.message : 'Unknown error'}`
         );
       }
     }
