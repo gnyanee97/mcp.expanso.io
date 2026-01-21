@@ -496,6 +496,10 @@ Returns both raw events and a summary view with breakdown by plans/runs, success
           type: 'string',
           description: 'REQUIRED if openapi_url is not provided: Data product name for URL construction (e.g., "sample-vulcan-dp", "vulcan-app"). URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}',
         },
+        api_key: {
+          type: 'string',
+          description: 'OPTIONAL: Vulcan API key used as Authorization Bearer token. If not provided, will check KV config or environment variables. User-provided api_key always overrides stored key.',
+        },
       },
     },
   },
@@ -585,6 +589,10 @@ Returns upstream and downstream dependency chains with depth information, plus a
         data_product_name: {
           type: 'string',
           description: 'REQUIRED if openapi_url is not provided: Data product name for URL construction (e.g., "sample-vulcan-dp", "vulcan-app"). URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}',
+        },
+        api_key: {
+          type: 'string',
+          description: 'OPTIONAL: Vulcan API key used as Authorization Bearer token. If not provided, will check KV config or environment variables. User-provided api_key always overrides stored key.',
         },
       },
       required: ['model_name'],
@@ -676,6 +684,10 @@ Returns failed models with their errors and upstream dependency chains, helping 
         data_product_name: {
           type: 'string',
           description: 'REQUIRED if openapi_url is not provided: Data product name for URL construction (e.g., "sample-vulcan-dp", "vulcan-app"). URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}',
+        },
+        api_key: {
+          type: 'string',
+          description: 'OPTIONAL: Vulcan API key used as Authorization Bearer token. If not provided, will check KV config or environment variables. User-provided api_key always overrides stored key.',
         },
       },
       required: ['run_id'],
@@ -794,6 +806,10 @@ Returns categorized failure analysis with recommended actions, decision (rerun/f
         data_product_name: {
           type: 'string',
           description: 'REQUIRED if openapi_url is not provided: Data product name for URL construction (e.g., "sample-vulcan-dp", "vulcan-app"). URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}',
+        },
+        api_key: {
+          type: 'string',
+          description: 'OPTIONAL: Vulcan API key used as Authorization Bearer token. If not provided, will check KV config or environment variables. User-provided api_key always overrides stored key.',
         },
       },
       required: ['run_id'],
@@ -1736,6 +1752,7 @@ ${prd}`;
       const api_base_url = args?.api_base_url as string | undefined;
       const tenantArg = (args?.tenant as string) || undefined;
       const data_product_name = args?.data_product_name as string | undefined;
+      const api_key = args?.api_key as string | undefined;
 
       // If openapi_url is provided, parse it to extract the three fields
       let parsedFromOpenApi: { api_base_url?: string; tenant?: string; data_product_name?: string } = {};
@@ -1780,12 +1797,16 @@ ${prd}`;
       // Get tenant config (may have defaults from KV/env)
       const tenantConfig = await getTenantConfig(env, tenantId);
 
-      // Merge: openapi_url parsed values → tool args → tenant config (tool args take precedence)
+      // Merge order: parsed from openapi_url (lowest) → tenant config from KV/env (middle) → tool args (highest)
+      // User-provided api_key always overrides stored key
       const mergedConfig: TenantConfig = {
-        ...tenantConfig,
-        api_base_url: api_base_url || parsedFromOpenApi.api_base_url || tenantConfig.api_base_url,
-        tenant: tenantArg || parsedFromOpenApi.tenant || tenantConfig.tenant,
-        data_product_name: data_product_name || parsedFromOpenApi.data_product_name || tenantConfig.data_product_name,
+        ...parsedFromOpenApi,  // Start with parsed values (lowest priority)
+        ...tenantConfig,        // Override with KV/env config (middle priority)
+        // Explicit overrides with tool args (highest priority - user-provided always wins)
+        api_base_url: api_base_url ?? tenantConfig.api_base_url ?? parsedFromOpenApi.api_base_url,
+        tenant: tenantArg ?? tenantConfig.tenant ?? parsedFromOpenApi.tenant,
+        data_product_name: data_product_name ?? tenantConfig.data_product_name ?? parsedFromOpenApi.data_product_name,
+        api_key: api_key ?? tenantConfig.api_key,  // api_key is not in openapi_url, so only check tool args and tenant config
       };
 
       // Log the merged config for debugging
@@ -1795,11 +1816,15 @@ ${prd}`;
           api_base_url: mergedConfig.api_base_url,
           tenant: mergedConfig.tenant,
           data_product_name: mergedConfig.data_product_name,
+          has_api_key: !!mergedConfig.api_key,
         },
       });
 
-      // Always require api_base_url for dynamic environment selection
-      if (!mergedConfig.api_base_url) {
+      // Check if URL config is missing - ask for BOTH URL config AND api_key upfront
+      const missingUrlConfig = !mergedConfig.api_base_url || !mergedConfig.tenant || !mergedConfig.data_product_name;
+      const missingApiKey = !mergedConfig.api_key;
+      
+      if (missingUrlConfig) {
         return {
           jsonrpc: '2.0',
           id,
@@ -1809,10 +1834,19 @@ ${prd}`;
                 type: 'text',
                 text: JSON.stringify(
                   {
-                    error: 'Vulcan API configuration required',
-                    message: 'Please specify either openapi_url OR provide api_base_url, data_product_name, and tenant separately.',
-                    action_required: 'CRITICAL: Ask the user for required information, then when they respond, you MUST extract the values and pass them as parameters in your next tool call.',
-                    step_by_step: [
+                    error: 'Configuration required',
+                    message: missingApiKey 
+                      ? 'Please provide: 1) OpenAPI URL OR (api_base_url, tenant, data_product_name), AND 2) api_key for authentication. Both are required.'
+                      : 'Please specify either openapi_url OR provide api_base_url, data_product_name, and tenant separately.',
+                    action_required: missingApiKey
+                      ? 'CRITICAL: Ask the user for BOTH URL configuration AND API key in one go. Example: "To query this environment, I need: 1) The OpenAPI URL (or base URL, tenant, and data product name), and 2) Your API key for authentication." Then when the user responds with both, call the tool with all parameters including api_key.'
+                      : 'CRITICAL: Ask the user for required information, then when they respond, you MUST extract the values and pass them as parameters in your next tool call.',
+                    step_by_step: missingApiKey ? [
+                      'Option A (recommended): Ask the user: "To query this environment, I need: 1) The OpenAPI URL (e.g., https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json), and 2) Your API key for authentication."',
+                      'Option B: Ask the user: "I need: 1) API base URL, 2) Data product name, 3) Tenant name, and 4) Your API key for authentication."',
+                      'When user provides all required info, call the tool with: openapi_url (or api_base_url + tenant + data_product_name) AND api_key, along with all other original parameters.',
+                      'IMPORTANT: Remember the api_key in this conversation and pass it in all subsequent tool calls for this environment.',
+                    ] : [
                       'Option A (easier): Ask the user: "What is the OpenAPI URL for the [environment] environment?" (e.g., "https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json"). Then call the tool with openapi_url parameter.',
                       'Option B: Ask the user: "What is the API base URL for the [environment] environment?" where [environment] is detected from their query (e.g., "prod", "local", "staging").',
                       'Step 2: Wait for user response with a URL (e.g., "https://everest-010626.dataos.app" or "everest-010626.dataos.app/home").',
@@ -1907,11 +1941,37 @@ ${prd}`;
         };
       }
 
+      // Fallback: Check if api_key is missing (in case URL config was provided but api_key wasn't)
+      if (!mergedConfig.api_key) {
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    error: 'Authentication required',
+                    message: 'This environment requires authentication. Provide api_key (used as Authorization: Bearer <api_key>).',
+                    action_required: 'Ask the user: "This environment requires an API key for authentication. Please provide your Vulcan API key." Then call the tool again with the api_key parameter. IMPORTANT: Remember the api_key in this conversation and pass it in all subsequent tool calls for this environment.',
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
       // Log the merged config
       console.log(`[MCP Handler] Merged config:`, {
         api_base_url: mergedConfig.api_base_url,
         tenant: mergedConfig.tenant,
         data_product_name: mergedConfig.data_product_name,
+        has_api_key: !!mergedConfig.api_key,
       });
 
       try {
@@ -1955,6 +2015,7 @@ ${prd}`;
       const api_base_url = args?.api_base_url as string | undefined;
       const tenantArg = (args?.tenant as string) || undefined;
       const data_product_name = args?.data_product_name as string | undefined;
+      const api_key = args?.api_key as string | undefined;
 
       // Validate required model_name
       if (!model_name) {
@@ -2024,12 +2085,16 @@ ${prd}`;
       // Get tenant config (may have defaults from KV/env)
       const tenantConfig = await getTenantConfig(env, tenantId);
 
-      // Merge: openapi_url parsed values → tool args → tenant config (tool args take precedence)
+      // Merge order: parsed from openapi_url (lowest) → tenant config from KV/env (middle) → tool args (highest)
+      // User-provided api_key always overrides stored key
       const mergedConfig: TenantConfig = {
-        ...tenantConfig,
-        api_base_url: api_base_url || parsedFromOpenApi.api_base_url || tenantConfig.api_base_url,
-        tenant: tenantArg || parsedFromOpenApi.tenant || tenantConfig.tenant,
-        data_product_name: data_product_name || parsedFromOpenApi.data_product_name || tenantConfig.data_product_name,
+        ...parsedFromOpenApi,  // Start with parsed values (lowest priority)
+        ...tenantConfig,        // Override with KV/env config (middle priority)
+        // Explicit overrides with tool args (highest priority - user-provided always wins)
+        api_base_url: api_base_url ?? tenantConfig.api_base_url ?? parsedFromOpenApi.api_base_url,
+        tenant: tenantArg ?? tenantConfig.tenant ?? parsedFromOpenApi.tenant,
+        data_product_name: data_product_name ?? tenantConfig.data_product_name ?? parsedFromOpenApi.data_product_name,
+        api_key: api_key ?? tenantConfig.api_key,  // api_key is not in openapi_url, so only check tool args and tenant config
       };
 
       // Log the merged config for debugging
@@ -2041,11 +2106,15 @@ ${prd}`;
           api_base_url: mergedConfig.api_base_url,
           tenant: mergedConfig.tenant,
           data_product_name: mergedConfig.data_product_name,
+          has_api_key: !!mergedConfig.api_key,
         },
       });
 
-      // Always require api_base_url for dynamic environment selection
-      if (!mergedConfig.api_base_url) {
+      // Check if URL config is missing - ask for BOTH URL config AND api_key upfront
+      const missingUrlConfig = !mergedConfig.api_base_url || !mergedConfig.tenant || !mergedConfig.data_product_name;
+      const missingApiKey = !mergedConfig.api_key;
+      
+      if (missingUrlConfig) {
         return {
           jsonrpc: '2.0',
           id,
@@ -2055,10 +2124,19 @@ ${prd}`;
                 type: 'text',
                 text: JSON.stringify(
                   {
-                    error: 'Vulcan API configuration required',
-                    message: 'Please specify either openapi_url OR provide api_base_url, data_product_name, and tenant separately.',
-                    action_required: 'CRITICAL: Ask the user for required information, then when they respond, you MUST extract the values and pass them as parameters in your next tool call.',
-                    step_by_step: [
+                    error: 'Configuration required',
+                    message: missingApiKey 
+                      ? 'Please provide: 1) OpenAPI URL OR (api_base_url, tenant, data_product_name), AND 2) api_key for authentication. Both are required.'
+                      : 'Please specify either openapi_url OR provide api_base_url, data_product_name, and tenant separately.',
+                    action_required: missingApiKey
+                      ? 'CRITICAL: Ask the user for BOTH URL configuration AND API key in one go. Example: "To query this environment, I need: 1) The OpenAPI URL (or base URL, tenant, and data product name), and 2) Your API key for authentication." Then when the user responds with both, call the tool with all parameters including api_key.'
+                      : 'CRITICAL: Ask the user for required information, then when they respond, you MUST extract the values and pass them as parameters in your next tool call.',
+                    step_by_step: missingApiKey ? [
+                      'Option A (recommended): Ask the user: "To query this environment, I need: 1) The OpenAPI URL (e.g., https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json), and 2) Your API key for authentication."',
+                      'Option B: Ask the user: "I need: 1) API base URL, 2) Data product name, 3) Tenant name, and 4) Your API key for authentication."',
+                      'When user provides all required info, call the tool with: openapi_url (or api_base_url + tenant + data_product_name) AND api_key, along with all other original parameters.',
+                      'IMPORTANT: Remember the api_key in this conversation and pass it in all subsequent tool calls for this environment.',
+                    ] : [
                       'Option A (easier): Ask the user: "What is the OpenAPI URL for the [environment] environment?" (e.g., "https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json"). Then call the tool with openapi_url parameter.',
                       'Option B: Ask the user: "What is the API base URL for the [environment] environment?" where [environment] is detected from their query (e.g., "prod", "local", "staging").',
                       'Step 2: Wait for user response with a URL (e.g., "https://everest-010626.dataos.app" or "everest-010626.dataos.app/home").',
@@ -2165,6 +2243,7 @@ ${prd}`;
       const api_base_url = args?.api_base_url as string | undefined;
       const tenantArg = (args?.tenant as string) || undefined;
       const data_product_name = args?.data_product_name as string | undefined;
+      const api_key = args?.api_key as string | undefined;
 
       // Validate required run_id
       if (!run_id) {
@@ -2234,12 +2313,16 @@ ${prd}`;
       // Get tenant config (may have defaults from KV/env)
       const tenantConfig = await getTenantConfig(env, tenantId);
 
-      // Merge: openapi_url parsed values → tool args → tenant config (tool args take precedence)
+      // Merge order: parsed from openapi_url (lowest) → tenant config from KV/env (middle) → tool args (highest)
+      // User-provided api_key always overrides stored key
       const mergedConfig: TenantConfig = {
-        ...tenantConfig,
-        api_base_url: api_base_url || parsedFromOpenApi.api_base_url || tenantConfig.api_base_url,
-        tenant: tenantArg || parsedFromOpenApi.tenant || tenantConfig.tenant,
-        data_product_name: data_product_name || parsedFromOpenApi.data_product_name || tenantConfig.data_product_name,
+        ...parsedFromOpenApi,  // Start with parsed values (lowest priority)
+        ...tenantConfig,        // Override with KV/env config (middle priority)
+        // Explicit overrides with tool args (highest priority - user-provided always wins)
+        api_base_url: api_base_url ?? tenantConfig.api_base_url ?? parsedFromOpenApi.api_base_url,
+        tenant: tenantArg ?? tenantConfig.tenant ?? parsedFromOpenApi.tenant,
+        data_product_name: data_product_name ?? tenantConfig.data_product_name ?? parsedFromOpenApi.data_product_name,
+        api_key: api_key ?? tenantConfig.api_key,  // api_key is not in openapi_url, so only check tool args and tenant config
       };
 
       // Log the merged config for debugging
@@ -2253,11 +2336,15 @@ ${prd}`;
           api_base_url: mergedConfig.api_base_url,
           tenant: mergedConfig.tenant,
           data_product_name: mergedConfig.data_product_name,
+          has_api_key: !!mergedConfig.api_key,
         },
       });
 
-      // Always require api_base_url for dynamic environment selection
-      if (!mergedConfig.api_base_url) {
+      // Check if URL config is missing - ask for BOTH URL config AND api_key upfront
+      const missingUrlConfig = !mergedConfig.api_base_url || !mergedConfig.tenant || !mergedConfig.data_product_name;
+      const missingApiKey = !mergedConfig.api_key;
+      
+      if (missingUrlConfig) {
         return {
           jsonrpc: '2.0',
           id,
@@ -2267,10 +2354,19 @@ ${prd}`;
                 type: 'text',
                 text: JSON.stringify(
                   {
-                    error: 'Vulcan API configuration required',
-                    message: 'Please specify either openapi_url OR provide api_base_url, data_product_name, and tenant separately.',
-                    action_required: 'CRITICAL: Ask the user for required information, then when they respond, you MUST extract the values and pass them as parameters in your next tool call.',
-                    step_by_step: [
+                    error: 'Configuration required',
+                    message: missingApiKey 
+                      ? 'Please provide: 1) OpenAPI URL OR (api_base_url, tenant, data_product_name), AND 2) api_key for authentication. Both are required.'
+                      : 'Please specify either openapi_url OR provide api_base_url, data_product_name, and tenant separately.',
+                    action_required: missingApiKey
+                      ? 'CRITICAL: Ask the user for BOTH URL configuration AND API key in one go. Example: "To query this environment, I need: 1) The OpenAPI URL (or base URL, tenant, and data product name), and 2) Your API key for authentication." Then when the user responds with both, call the tool with all parameters including api_key.'
+                      : 'CRITICAL: Ask the user for required information, then when they respond, you MUST extract the values and pass them as parameters in your next tool call.',
+                    step_by_step: missingApiKey ? [
+                      'Option A (recommended): Ask the user: "To query this environment, I need: 1) The OpenAPI URL (e.g., https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json), and 2) Your API key for authentication."',
+                      'Option B: Ask the user: "I need: 1) API base URL, 2) Data product name, 3) Tenant name, and 4) Your API key for authentication."',
+                      'When user provides all required info, call the tool with: openapi_url (or api_base_url + tenant + data_product_name) AND api_key, along with all other original parameters.',
+                      'IMPORTANT: Remember the api_key in this conversation and pass it in all subsequent tool calls for this environment.',
+                    ] : [
                       'Option A (easier): Ask the user: "What is the OpenAPI URL for the [environment] environment?" (e.g., "https://everest-010626.dataos.app/system/vulcan/sample-vulcan-dp/openapi.json"). Then call the tool with openapi_url parameter.',
                       'Option B: Ask the user: "What is the API base URL for the [environment] environment?" where [environment] is detected from their query (e.g., "prod", "local", "staging").',
                       'Step 2: Wait for user response with a URL (e.g., "https://everest-010626.dataos.app" or "everest-010626.dataos.app/home").',
@@ -2329,6 +2425,31 @@ ${prd}`;
                     error: 'Tenant name required',
                     message: 'Please specify the tenant name to query. URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}',
                     action_required: 'Ask the user: "What is the tenant name?" (e.g., "system").',
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      // Fallback: Check if api_key is missing (in case URL config was provided but api_key wasn't)
+      if (!mergedConfig.api_key) {
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    error: 'Authentication required',
+                    message: 'This environment requires authentication. Provide api_key (used as Authorization: Bearer <api_key>).',
+                    action_required: 'Ask the user: "This environment requires an API key for authentication. Please provide your Vulcan API key." Then call the tool again with the api_key parameter. IMPORTANT: Remember the api_key in this conversation and pass it in all subsequent tool calls for this environment.',
                   },
                   null,
                   2
@@ -2409,6 +2530,7 @@ ${prd}`;
       const api_base_url = args?.api_base_url as string | undefined;
       const tenantArg = (args?.tenant as string) || undefined;
       const data_product_name = args?.data_product_name as string | undefined;
+      const api_key = args?.api_key as string | undefined;
 
       // Validate required run_id
       if (!run_id) {
@@ -2478,12 +2600,16 @@ ${prd}`;
       // Get tenant config (may have defaults from KV/env)
       const tenantConfig = await getTenantConfig(env, tenantId);
 
-      // Merge: openapi_url parsed values → tool args → tenant config (tool args take precedence)
+      // Merge order: parsed from openapi_url (lowest) → tenant config from KV/env (middle) → tool args (highest)
+      // User-provided api_key always overrides stored key
       const mergedConfig: TenantConfig = {
-        ...tenantConfig,
-        api_base_url: api_base_url || parsedFromOpenApi.api_base_url || tenantConfig.api_base_url,
-        tenant: tenantArg || parsedFromOpenApi.tenant || tenantConfig.tenant,
-        data_product_name: data_product_name || parsedFromOpenApi.data_product_name || tenantConfig.data_product_name,
+        ...parsedFromOpenApi,  // Start with parsed values (lowest priority)
+        ...tenantConfig,        // Override with KV/env config (middle priority)
+        // Explicit overrides with tool args (highest priority - user-provided always wins)
+        api_base_url: api_base_url ?? tenantConfig.api_base_url ?? parsedFromOpenApi.api_base_url,
+        tenant: tenantArg ?? tenantConfig.tenant ?? parsedFromOpenApi.tenant,
+        data_product_name: data_product_name ?? tenantConfig.data_product_name ?? parsedFromOpenApi.data_product_name,
+        api_key: api_key ?? tenantConfig.api_key,  // api_key is not in openapi_url, so only check tool args and tenant config
       };
 
       // Log the merged config for debugging
@@ -2501,8 +2627,34 @@ ${prd}`;
           api_base_url: mergedConfig.api_base_url,
           tenant: mergedConfig.tenant,
           data_product_name: mergedConfig.data_product_name,
+          has_api_key: !!mergedConfig.api_key,
         },
       });
+
+      // Check if api_key is missing
+      if (!mergedConfig.api_key) {
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    error: 'Authentication required',
+                    message: 'This environment requires authentication. Provide api_key (used as Authorization: Bearer <api_key>).',
+                    action_required: 'Ask the user: "This environment requires an API key for authentication. Please provide your Vulcan API key." Then call the tool again with the api_key parameter.',
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
 
       // Always require api_base_url for dynamic environment selection
       if (!mergedConfig.api_base_url) {
@@ -2577,6 +2729,31 @@ ${prd}`;
                     error: 'Tenant name required',
                     message: 'Please specify the tenant name to query. URL format: {api_base_url}/{tenant}/vulcan/{data_product_name}',
                     action_required: 'Ask the user: "What is the tenant name?" (e.g., "system").',
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      // Fallback: Check if api_key is missing (in case URL config was provided but api_key wasn't)
+      if (!mergedConfig.api_key) {
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    error: 'Authentication required',
+                    message: 'This environment requires authentication. Provide api_key (used as Authorization: Bearer <api_key>).',
+                    action_required: 'Ask the user: "This environment requires an API key for authentication. Please provide your Vulcan API key." Then call the tool again with the api_key parameter. IMPORTANT: Remember the api_key in this conversation and pass it in all subsequent tool calls for this environment.',
                   },
                   null,
                   2

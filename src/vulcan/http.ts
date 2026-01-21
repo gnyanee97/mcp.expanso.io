@@ -69,14 +69,16 @@ export function getVulcanConfig(tenantConfig: TenantConfig | null): VulcanConfig
     normalizedBaseUrl: baseUrl,
   });
 
-  // Get token (prefer vulcan_token, fallback to VULCAN_TOKEN for backward compat)
-  const token = tenantConfig.vulcan_token || tenantConfig.VULCAN_TOKEN || '';
+  // Get API key/token: prefer api_key, then vulcan_token, then VULCAN_TOKEN (backward compat)
+  // api_key uses "Authorization: Bearer" format by default
+  const apiKey = tenantConfig.api_key || tenantConfig.vulcan_token || tenantConfig.VULCAN_TOKEN || '';
   const headerName = tenantConfig.VULCAN_AUTH_HEADER || "Authorization";
-  const scheme = tenantConfig.VULCAN_AUTH_SCHEME || "Bearer";
+  // If api_key is provided, always use "Bearer" scheme; otherwise use configured scheme
+  const scheme = tenantConfig.api_key ? "Bearer" : (tenantConfig.VULCAN_AUTH_SCHEME || "Bearer");
 
   return { 
     baseUrl, 
-    auth: { headerName, scheme, token } as VulcanAuth 
+    auth: { headerName, scheme, token: apiKey } as VulcanAuth 
   };
 }
 
@@ -131,10 +133,29 @@ export async function vulcanGet<T>(
     }
   }
 
-  // Log the URL being called for debugging
+  // Log the URL being called for debugging (redact API key from logs)
   const finalUrl = url.toString();
+  const redactedHeaders = { ...headers };
+  if (redactedHeaders[auth.headerName]) {
+    const authValue = redactedHeaders[auth.headerName];
+    if (authValue && typeof authValue === 'string') {
+      // Redact: show first 4 chars and last 4 chars, replace middle with ***
+      const parts = authValue.split(' ');
+      if (parts.length > 1) {
+        const token = parts.slice(1).join(' ');
+        if (token.length > 8) {
+          redactedHeaders[auth.headerName] = `${parts[0]} ${token.slice(0, 4)}***${token.slice(-4)}`;
+        } else {
+          redactedHeaders[auth.headerName] = `${parts[0]} ***`;
+        }
+      } else {
+        redactedHeaders[auth.headerName] = '***';
+      }
+    }
+  }
   console.log(`[Vulcan API] GET ${finalUrl}`);
   console.log(`[Vulcan API] Base URL: ${baseUrl}, Path: ${path}, Final URL: ${finalUrl}`);
+  console.log(`[Vulcan API] Headers:`, JSON.stringify(redactedHeaders, null, 2));
 
   const res = await fetch(finalUrl, { method: "GET", headers });
 
@@ -147,17 +168,67 @@ export async function vulcanGet<T>(
 
   // Read body safely (truncate for logging)
   const text = await res.text();
+  const contentType = res.headers.get('content-type') || '';
+  const isJsonContentType = contentType.includes('application/json') || contentType.includes('text/json');
+  
+  // Log response snippet (safe - no secrets in response body)
   console.log("[Vulcan API] Body snippet", text.slice(0, 300));
 
   // Check if response is OK
   if (!res.ok) {
-    const errorMessage = `Vulcan API error ${res.status} ${res.statusText}: ${text.slice(0, 300)}`;
+    // Handle authentication errors specifically
+    if (res.status === 401 || res.status === 403) {
+      const errorMessage = `Auth failed (${res.status}). Please provide a valid api_key.`;
+      console.error(`[Vulcan API Auth Error] ${errorMessage}`);
+      throw new Error(errorMessage);
+    }
+    
+    // Other errors - check if response is JSON
+    if (isJsonContentType) {
+      // Try to parse as JSON
+      try {
+        const errorJson = JSON.parse(text);
+        const errorDetails = errorJson.message || errorJson.error || JSON.stringify(errorJson).slice(0, 200);
+        const errorMessage = `Vulcan API error ${res.status} ${res.statusText}: ${errorDetails}`;
+        console.error(`[Vulcan API Error] ${errorMessage}`);
+        throw new Error(errorMessage);
+      } catch {
+        // Fall through to non-JSON handling
+      }
+    }
+    
+    // Not JSON or failed to parse - provide concise error
+    const isHtml = text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html');
+    const responseType = isHtml ? 'HTML (likely auth redirect)' : 'non-JSON';
+    const snippet = text.slice(0, 100).replace(/\s+/g, ' ').trim(); // Clean up whitespace
+    const errorMessage = `Vulcan API error ${res.status} ${res.statusText}: got ${responseType}. Response snippet: ${snippet}`;
+    console.error(`[Vulcan API Error] ${errorMessage}`);
+    throw new Error(errorMessage);
+  }
+
+  // Response is OK (200-299) - check if it's actually JSON
+  // Detect HTML responses (even with 200 OK) - indicates routing/auth issue
+  const isHtml = text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html');
+  if (isHtml || (!isJsonContentType && text.length > 0)) {
+    const responseType = isHtml ? 'HTML (likely auth redirect)' : 'non-JSON';
+    const snippet = text.slice(0, 100).replace(/\s+/g, ' ').trim(); // Clean up whitespace
+    const errorMessage = `Vulcan API returned ${responseType} instead of JSON (status: ${res.status}). Response snippet: ${snippet}`;
     console.error(`[Vulcan API Error] ${errorMessage}`);
     throw new Error(errorMessage);
   }
 
   // Parse as JSON
-  const data = JSON.parse(text) as T;
-  return data;
+  try {
+    const data = JSON.parse(text) as T;
+    return data;
+  } catch (parseError) {
+    // This should rarely happen if Content-Type is correct, but handle gracefully
+    const isHtmlResponse = text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html');
+    const responseType = isHtmlResponse ? 'HTML (likely auth redirect)' : 'non-JSON';
+    const snippet = text.slice(0, 100).replace(/\s+/g, ' ').trim(); // Clean up whitespace
+    const errorMessage = `Failed to parse Vulcan API response as JSON (status: ${res.status}): got ${responseType}. Response snippet: ${snippet}`;
+    console.error(`[Vulcan API Parse Error] ${errorMessage}`);
+    throw new Error(errorMessage);
+  }
 }
 

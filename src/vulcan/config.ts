@@ -10,7 +10,8 @@ export interface TenantConfig {
   api_base_url?: string;        // e.g. https://everest-010626.dataos.app (origin only, no path)
   tenant?: string;              // e.g. system
   data_product_name?: string;  // e.g. sample-vulcan-dp
-  vulcan_token?: string;        // API authentication token (should be from Worker secret/env)
+  api_key?: string;            // API key for authentication (preferred over vulcan_token)
+  vulcan_token?: string;        // API authentication token (legacy, fallback to api_key)
   VULCAN_BASE_URL?: string;     // Legacy: backward compatibility
   VULCAN_TOKEN?: string;        // Legacy: backward compatibility
   VULCAN_AUTH_HEADER?: string;  // Legacy: backward compatibility
