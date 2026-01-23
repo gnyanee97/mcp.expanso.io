@@ -70,11 +70,11 @@ export function getVulcanConfig(tenantConfig: TenantConfig | null): VulcanConfig
   });
 
   // Get API key/token: prefer api_key, then vulcan_token, then VULCAN_TOKEN (backward compat)
-  // api_key uses raw Authorization header (no Bearer prefix) to match Postman working format
+  // api_key uses Bearer Authorization header format (matches Postman working format)
   const apiKey = tenantConfig.api_key || tenantConfig.vulcan_token || tenantConfig.VULCAN_TOKEN || '';
   const headerName = tenantConfig.VULCAN_AUTH_HEADER || "Authorization";
-  // If api_key is provided, use empty scheme (raw key, no Bearer prefix); otherwise use configured scheme
-  const scheme = tenantConfig.api_key ? "" : (tenantConfig.VULCAN_AUTH_SCHEME || "Bearer");
+  // If api_key is provided, use Bearer scheme; otherwise use configured scheme
+  const scheme = tenantConfig.api_key ? "Bearer" : (tenantConfig.VULCAN_AUTH_SCHEME || "Bearer");
   
   // Debug logging for API key (redacted)
   console.log("[Vulcan Config] API Key check", {
