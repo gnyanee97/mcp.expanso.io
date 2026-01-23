@@ -139,9 +139,15 @@ export async function vulcanGet<T>(
   if (auth.token) {
     if (auth.scheme) {
       headers[auth.headerName] = `${auth.scheme} ${auth.token}`;
+      console.log("[Vulcan API] Auth header format: scheme + token");
     } else {
       headers[auth.headerName] = auth.token;
+      console.log("[Vulcan API] Auth header format: raw token (no scheme)");
     }
+    console.log("[Vulcan API] Auth header length:", headers[auth.headerName].length);
+    console.log("[Vulcan API] Auth header preview:", `${headers[auth.headerName].slice(0, 10)}...${headers[auth.headerName].slice(-10)}`);
+  } else {
+    console.warn("[Vulcan API] WARNING: No auth token provided - Authorization header will NOT be sent!");
   }
 
   // Log the URL being called for debugging (redact API key from logs)
