@@ -75,6 +75,17 @@ export function getVulcanConfig(tenantConfig: TenantConfig | null): VulcanConfig
   const headerName = tenantConfig.VULCAN_AUTH_HEADER || "Authorization";
   // If api_key is provided, use empty scheme (raw key, no Bearer prefix); otherwise use configured scheme
   const scheme = tenantConfig.api_key ? "" : (tenantConfig.VULCAN_AUTH_SCHEME || "Bearer");
+  
+  // Debug logging for API key (redacted)
+  console.log("[Vulcan Config] API Key check", {
+    has_api_key: !!tenantConfig.api_key,
+    has_vulcan_token: !!tenantConfig.vulcan_token,
+    has_VULCAN_TOKEN: !!tenantConfig.VULCAN_TOKEN,
+    apiKey_length: apiKey.length,
+    apiKey_preview: apiKey ? `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}` : 'EMPTY',
+    scheme: scheme || '(empty - raw token)',
+    headerName,
+  });
 
   return { 
     baseUrl, 

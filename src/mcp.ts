@@ -1810,6 +1810,14 @@ ${prd}`;
         api_key: api_key ?? tenantConfig.api_key,  // api_key is not in openapi_url, so only check tool args and tenant config
       };
 
+      // Debug API key flow
+      console.log("[MCP Handler] API Key debug", {
+        api_key_from_args: api_key ? `${api_key.slice(0, 4)}...${api_key.slice(-4)} (len: ${api_key.length})` : 'NOT_PROVIDED',
+        api_key_from_tenant: tenantConfig.api_key ? `${tenantConfig.api_key.slice(0, 4)}...${tenantConfig.api_key.slice(-4)} (len: ${tenantConfig.api_key.length})` : 'NOT_IN_KV',
+        final_api_key: mergedConfig.api_key ? `${mergedConfig.api_key.slice(0, 4)}...${mergedConfig.api_key.slice(-4)} (len: ${mergedConfig.api_key.length})` : 'EMPTY',
+        final_api_key_length: mergedConfig.api_key?.length || 0,
+      });
+
       // Log the merged config for debugging
       console.log("[MCP Handler] vulcan_activity_timeline", {
         tenantId,
