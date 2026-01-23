@@ -174,14 +174,21 @@ export async function vulcanGet<T>(
   // Log response snippet (safe - no secrets in response body)
   console.log("[Vulcan API] Body snippet", text.slice(0, 300));
 
-  // Check if response is OK
-  if (!res.ok) {
-    // Handle authentication errors specifically
-    if (res.status === 401 || res.status === 403) {
-      const errorMessage = `Auth failed (${res.status}). Please provide a valid api_key.`;
-      console.error(`[Vulcan API Auth Error] ${errorMessage}`);
-      throw new Error(errorMessage);
-    }
+          // Check if response is OK
+          if (!res.ok) {
+            // Handle authentication errors specifically
+            if (res.status === 401 || res.status === 403) {
+              const errorMessage = `Auth failed (${res.status}). Please provide a valid api_key.`;
+              console.error(`[Vulcan API Auth Error] ${errorMessage}`);
+              throw new Error(errorMessage);
+            }
+            
+            // Handle Cloudflare timeout errors (522 = Connection timed out)
+            if (res.status === 522) {
+              const errorMessage = `Connection timeout (522). The Vulcan API server did not respond in time. This could indicate: 1) The API server is slow or down, 2) Network connectivity issues, 3) The API URL might be incorrect. Check the URL: ${finalUrl}`;
+              console.error(`[Vulcan API Timeout Error] ${errorMessage}`);
+              throw new Error(errorMessage);
+            }
     
     // Other errors - check if response is JSON
     if (isJsonContentType) {

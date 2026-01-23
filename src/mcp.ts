@@ -1803,9 +1803,10 @@ ${prd}`;
         ...parsedFromOpenApi,  // Start with parsed values (lowest priority)
         ...tenantConfig,        // Override with KV/env config (middle priority)
         // Explicit overrides with tool args (highest priority - user-provided always wins)
-        api_base_url: api_base_url ?? tenantConfig.api_base_url ?? parsedFromOpenApi.api_base_url,
-        tenant: tenantArg ?? tenantConfig.tenant ?? parsedFromOpenApi.tenant,
-        data_product_name: data_product_name ?? tenantConfig.data_product_name ?? parsedFromOpenApi.data_product_name,
+        // Check tool args first, then parsed values, then tenant config
+        api_base_url: api_base_url ?? parsedFromOpenApi.api_base_url ?? tenantConfig.api_base_url,
+        tenant: tenantArg ?? parsedFromOpenApi.tenant ?? tenantConfig.tenant,
+        data_product_name: data_product_name ?? parsedFromOpenApi.data_product_name ?? tenantConfig.data_product_name,
         api_key: api_key ?? tenantConfig.api_key,  // api_key is not in openapi_url, so only check tool args and tenant config
       };
 
@@ -2091,9 +2092,10 @@ ${prd}`;
         ...parsedFromOpenApi,  // Start with parsed values (lowest priority)
         ...tenantConfig,        // Override with KV/env config (middle priority)
         // Explicit overrides with tool args (highest priority - user-provided always wins)
-        api_base_url: api_base_url ?? tenantConfig.api_base_url ?? parsedFromOpenApi.api_base_url,
-        tenant: tenantArg ?? tenantConfig.tenant ?? parsedFromOpenApi.tenant,
-        data_product_name: data_product_name ?? tenantConfig.data_product_name ?? parsedFromOpenApi.data_product_name,
+        // Check tool args first, then parsed values, then tenant config
+        api_base_url: api_base_url ?? parsedFromOpenApi.api_base_url ?? tenantConfig.api_base_url,
+        tenant: tenantArg ?? parsedFromOpenApi.tenant ?? tenantConfig.tenant,
+        data_product_name: data_product_name ?? parsedFromOpenApi.data_product_name ?? tenantConfig.data_product_name,
         api_key: api_key ?? tenantConfig.api_key,  // api_key is not in openapi_url, so only check tool args and tenant config
       };
 
@@ -2319,9 +2321,10 @@ ${prd}`;
         ...parsedFromOpenApi,  // Start with parsed values (lowest priority)
         ...tenantConfig,        // Override with KV/env config (middle priority)
         // Explicit overrides with tool args (highest priority - user-provided always wins)
-        api_base_url: api_base_url ?? tenantConfig.api_base_url ?? parsedFromOpenApi.api_base_url,
-        tenant: tenantArg ?? tenantConfig.tenant ?? parsedFromOpenApi.tenant,
-        data_product_name: data_product_name ?? tenantConfig.data_product_name ?? parsedFromOpenApi.data_product_name,
+        // Check tool args first, then parsed values, then tenant config
+        api_base_url: api_base_url ?? parsedFromOpenApi.api_base_url ?? tenantConfig.api_base_url,
+        tenant: tenantArg ?? parsedFromOpenApi.tenant ?? tenantConfig.tenant,
+        data_product_name: data_product_name ?? parsedFromOpenApi.data_product_name ?? tenantConfig.data_product_name,
         api_key: api_key ?? tenantConfig.api_key,  // api_key is not in openapi_url, so only check tool args and tenant config
       };
 
@@ -2606,9 +2609,10 @@ ${prd}`;
         ...parsedFromOpenApi,  // Start with parsed values (lowest priority)
         ...tenantConfig,        // Override with KV/env config (middle priority)
         // Explicit overrides with tool args (highest priority - user-provided always wins)
-        api_base_url: api_base_url ?? tenantConfig.api_base_url ?? parsedFromOpenApi.api_base_url,
-        tenant: tenantArg ?? tenantConfig.tenant ?? parsedFromOpenApi.tenant,
-        data_product_name: data_product_name ?? tenantConfig.data_product_name ?? parsedFromOpenApi.data_product_name,
+        // Check tool args first, then parsed values, then tenant config
+        api_base_url: api_base_url ?? parsedFromOpenApi.api_base_url ?? tenantConfig.api_base_url,
+        tenant: tenantArg ?? parsedFromOpenApi.tenant ?? tenantConfig.tenant,
+        data_product_name: data_product_name ?? parsedFromOpenApi.data_product_name ?? tenantConfig.data_product_name,
         api_key: api_key ?? tenantConfig.api_key,  // api_key is not in openapi_url, so only check tool args and tenant config
       };
 
